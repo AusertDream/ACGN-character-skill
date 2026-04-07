@@ -1,1 +1,36 @@
+# 依赖项目（作为参考，不纳入版本控制）
 colleague-skill
+
+# 大文件和模型
+models/
+live2d/
+
+# 训练数据
+training data/
+
+# Claude Code
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# conda 环境
+.conda/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+nul
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
