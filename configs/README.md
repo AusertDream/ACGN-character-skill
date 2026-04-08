@@ -47,7 +47,7 @@ Example:
 
 ```bash
 cd yuexia-skill/tools
-python roi_calibrator.py --create --work-id my_work --width 1920 --height 1080 --output ../../configs/my_work_roi.yaml
+python roi_calibrator.py --create --work-id my_work --width 1920 --height 1080 --output configs/my_work_roi.yaml
 ```
 
 This will prompt you to enter ROI coordinates interactively.
@@ -55,19 +55,22 @@ This will prompt you to enter ROI coordinates interactively.
 ### Method 2: Copy and Edit Template
 
 ```bash
-cp configs/yuexia_ep01_roi.yaml configs/my_work_roi.yaml
+cp yuexia-skill/tools/configs/yuexia_ep01_roi.yaml yuexia-skill/tools/configs/my_work_roi.yaml
 # Edit the file manually with correct coordinates
 ```
 
 ### Method 3: Programmatic Creation
 
 ```python
-from yuexia_skill.tools.roi_config import create_default_config, ROIConfig
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent / 'yuexia-skill' / 'tools'))
+from roi_config import create_default_config, ROIConfig
 
 config_dict = create_default_config('my_work', 1920, 1080)
 # Modify config_dict as needed
 config = ROIConfig(config_dict)
-config.save('configs/my_work_roi.yaml')
+config.save('yuexia-skill/tools/configs/my_work_roi.yaml')
 ```
 
 ## Validating Configuration
@@ -76,7 +79,7 @@ config.save('configs/my_work_roi.yaml')
 
 ```bash
 cd yuexia-skill/tools
-python roi_calibrator.py --validate --config ../../configs/yuexia_ep01_roi.yaml
+python roi_calibrator.py --validate --config configs/yuexia_ep01_roi.yaml
 ```
 
 This checks:
@@ -90,7 +93,7 @@ This checks:
 ```bash
 # Extract sample frames first (requires ffmpeg or opencv)
 # Then validate with frames
-python roi_calibrator.py --validate --config ../../configs/yuexia_ep01_roi.yaml \
+python roi_calibrator.py --validate --config configs/yuexia_ep01_roi.yaml \
     --frames frame1.jpg frame2.jpg frame3.jpg
 ```
 
@@ -99,7 +102,7 @@ python roi_calibrator.py --validate --config ../../configs/yuexia_ep01_roi.yaml 
 ```bash
 # Requires opencv-python: pip install opencv-python
 python roi_calibrator.py --extract-crops \
-    --config ../../configs/yuexia_ep01_roi.yaml \
+    --config configs/yuexia_ep01_roi.yaml \
     --frames ../../benchmark/frames/*.jpg \
     --crops-output ../../benchmark/roi_samples/
 ```
@@ -136,10 +139,13 @@ This will extract dialogue box and name box crops from each frame, allowing you 
 ## Using Configuration in Pipeline
 
 ```python
-from yuexia_skill.tools.roi_config import ROIConfig
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent / 'yuexia-skill' / 'tools'))
+from roi_config import ROIConfig
 
 # Load configuration
-config = ROIConfig.from_file('configs/yuexia_ep01_roi.yaml')
+config = ROIConfig.from_file('yuexia-skill/tools/configs/yuexia_ep01_roi.yaml')
 
 # Get ROI coordinates
 dialogue_x, dialogue_y, dialogue_w, dialogue_h = config.get_dialogue_box_roi()

@@ -135,8 +135,8 @@ class ROICalibrator:
             return False
 
         # Basic validation passed
-        print("✓ Configuration structure is valid")
-        print("✓ All validation frames exist")
+        print("[OK] Configuration structure is valid")
+        print("[OK] All validation frames exist")
         print()
         print("Note: Visual validation requires opencv-python")
         print("      Install with: pip install opencv-python")
@@ -188,7 +188,7 @@ class ROICalibrator:
             if (i + 1) % 10 == 0:
                 print(f"  Processed {i + 1} frames...")
 
-        print(f"\n✓ Extracted crops saved to: {output_dir}")
+        print(f"\n[OK] Extracted crops saved to: {output_dir}")
         print(f"  - dialogue_*.jpg: Dialogue box crops")
         print(f"  - name_*.jpg: Name box crops")
         print(f"\nManually inspect these crops to verify ROI accuracy")
@@ -235,7 +235,7 @@ def main():
         if args.output:
             output_path = Path(args.output)
             config.save(output_path, format='yaml' if output_path.suffix in ['.yaml', '.yml'] else 'json')
-            print(f"\n✓ Configuration saved to: {output_path}")
+            print(f"\n[OK] Configuration saved to: {output_path}")
         else:
             print("\nConfiguration created but not saved (use --output to save)")
 
@@ -249,9 +249,9 @@ def main():
         frame_paths = [Path(f) for f in args.frames] if args.frames else []
 
         if calibrator.validate_config(config, frame_paths):
-            print("\n✓ Validation passed")
+            print("\n[OK] Validation passed")
         else:
-            print("\n✗ Validation failed")
+            print("\n[X] Validation failed")
             return 1
 
     # Extract ROI crops

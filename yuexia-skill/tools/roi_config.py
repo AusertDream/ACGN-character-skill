@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 import json
 import yaml
+import copy
 
 
 class ROIConfig:
@@ -138,7 +139,7 @@ class ROIConfig:
         scale_x = target_width / base_width
         scale_y = target_height / base_height
 
-        new_config = self.config.copy()
+        new_config = copy.deepcopy(self.config)
         new_config['resolution'] = {'width': target_width, 'height': target_height}
 
         for box_name in ['dialogue_box', 'name_box']:
