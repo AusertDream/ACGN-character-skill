@@ -10,6 +10,7 @@ training data/
 
 # Claude Code
 .claude/
+.humanize*
 
 # Python
 __pycache__/
