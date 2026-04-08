@@ -7,8 +7,6 @@ live2d/
 
 # 训练数据
 training data/
-benchmark/gold_standard/video_clip.mp4
-benchmark/gold_standard/sample_frames/
 
 # Claude Code
 .claude/
