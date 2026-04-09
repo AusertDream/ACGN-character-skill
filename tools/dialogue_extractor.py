@@ -311,9 +311,10 @@ class DialogueExtractor:
                             crop_name = f"{finalized_event.event_id}_dialog.png"
                             dialog_crop.save(self.crops_dir / crop_name)
                             provenance["roi_crop_file"] = crop_name
-                            if name_crop is not None:
+                            save_name_crop = vp.crop_roi(frame, "name_box")
+                            if save_name_crop is not None:
                                 name_crop_name = f"{finalized_event.event_id}_name.png"
-                                name_crop.save(self.crops_dir / name_crop_name)
+                                save_name_crop.save(self.crops_dir / name_crop_name)
 
                         # Write event
                         writer.write_event(
@@ -343,7 +344,9 @@ class DialogueExtractor:
                         last_log_time = timestamp
 
                     # Cache speaker for active event (after process_frame may have created one)
+                    # Reset inheritance to prevent cross-event speaker bleed
                     if event_detector.current_event is not None and cached_speaker is None:
+                        speaker_extractor.reset()  # Prevent inheriting previous event's speaker
                         name_crop = vp.crop_roi(frame, "name_box")
                         s, sc = speaker_extractor.extract_speaker(name_crop)
                         if s is not None:
