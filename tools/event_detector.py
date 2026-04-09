@@ -90,6 +90,7 @@ class EventDetector:
         self.current_event: Optional[DialogueEvent] = None
         self.event_counter = 0
         self.empty_frame_count = 0
+        self._last_finalized_text = ""  # Prevent duplicate events for same text
 
     def process_frame(
         self,
@@ -124,7 +125,11 @@ class EventDetector:
     ) -> Optional[DialogueEvent]:
         """Handle IDLE state."""
         if len(text) >= self.min_text_length:
+            # Skip if this is the same text we just finalized (prevents duplicates)
+            if self._last_finalized_text and self._text_similarity(text, self._last_finalized_text) > self.similarity_threshold:
+                return None
             # Text detected, start new event
+            self._last_finalized_text = ""  # Clear on new event
             self.event_counter += 1
             self.current_event = DialogueEvent(
                 event_id=f"event_{self.event_counter:06d}",
@@ -133,6 +138,9 @@ class EventDetector:
             )
             self.current_event.add_observation(text, confidence, timestamp)
             self.empty_frame_count = 0
+        else:
+            # Empty frame clears last finalized text
+            self._last_finalized_text = ""
 
         return None
 
@@ -215,6 +223,12 @@ class EventDetector:
         ratio = SequenceMatcher(None, prev_text, new_text).ratio()
         return ratio < self.similarity_threshold
 
+    def _text_similarity(self, text_a: str, text_b: str) -> float:
+        """Calculate similarity ratio between two texts."""
+        if not text_a or not text_b:
+            return 0.0
+        return SequenceMatcher(None, text_a, text_b).ratio()
+
     def _merge_text_candidates(self, text_history: List[str], confidence_history: List[float]) -> tuple[str, float]:
         """Pick the best final text from text_history.
 
@@ -266,6 +280,9 @@ class EventDetector:
         )
         event.text = merged_text
         event.confidence = merged_conf
+
+        # Record finalized text for deduplication
+        self._last_finalized_text = event.text
 
         # Reset state
         self.current_event = None

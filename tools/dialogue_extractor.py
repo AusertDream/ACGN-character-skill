@@ -172,6 +172,20 @@ class DialogueExtractor:
         if not self.roi_config_path.exists():
             raise FileNotFoundError(f"ROI config not found: {self.roi_config_path}")
 
+        # Try loading speaker aliases from ROI/work config if not provided
+        if self.speaker_aliases is None:
+            import yaml
+            try:
+                with open(self.roi_config_path, "r", encoding="utf-8") as f:
+                    config = yaml.safe_load(f) or {}
+                if "speaker_aliases" in config:
+                    self.speaker_aliases = {
+                        k: (v if v else [])
+                        for k, v in config["speaker_aliases"].items()
+                    }
+            except Exception:
+                pass
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.video_id = self.video_path.stem
