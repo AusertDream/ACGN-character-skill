@@ -1,0 +1,32 @@
+work_id: yuexia
+name: "月下 - 崩坏三舰长线"
+
+dialog_box:
+  x: 0.047
+  y: 0.727
+  w: 0.802
+  h: 0.157
+
+name_box:
+  x: 0.049
+  y: 0.656
+  w: 0.109
+  h: 0.072
+
+dialog_preprocess: semi_transparent
+name_preprocess: default
+
+ocr_engine: paddleocr
+target_fps: 2.0
+review_threshold: 0.7
+
+speaker_aliases:
+  舰长: []
+  姬子: [姬子老师]
+  琪亚娜: [琪亚]
+  芽衣: []
+  布洛妮娅: [布洛妮]
+  德丽莎: []
+  符华: []
+  旁白: []
+  系统: []
