@@ -95,7 +95,8 @@ class DialogueExtractor:
     # ------------------------------------------------------------------
 
     def _parse_speaker_from_text(self, event, known_speakers: Set[str]) -> tuple:
-        """Parse speaker name from the beginning of dialog text."""
+        """Parse speaker name from the beginning of dialog text.
+        Routes through alias normalization via SpeakerExtractor."""
         text = event.text.strip()
         if not text:
             return (None, 0.0)
@@ -107,7 +108,8 @@ class DialogueExtractor:
                 return (None, 0.0)
             if candidate in known_speakers:
                 event.text = remaining
-                speaker = self.special_speakers.get(candidate, candidate)
+                # Use speaker_extractor's normalization for consistent alias handling
+                speaker = self._speaker_extractor.normalize_speaker(candidate) if self._speaker_extractor else self.special_speakers.get(candidate, candidate)
                 return (speaker, event.confidence)
         return (None, 0.0)
 
@@ -165,20 +167,24 @@ class DialogueExtractor:
     # Event output helper
     # ------------------------------------------------------------------
 
-    def _process_finalized_event(self, event, speaker, speaker_conf, frame, dialog_crop, vp, fusion, writer, provenance):
+    def _process_finalized_event(self, event, speaker, speaker_conf, frame, dialog_crop, vp, dialog_candidates, selection_reason, writer, provenance):
         """Compute output via event_to_output, save artifacts, write JSONL.
+
+        Args:
+            dialog_candidates: Pre-captured OCR candidates from dialog OCR (not name-box).
 
         Returns (is_review, output).
         """
         from tools.output_formatter import event_to_output
 
-        ocr_candidates = fusion.get_candidates() or None
+        ocr_candidates = dialog_candidates or None
 
         # Compute output FIRST so review_required includes text quality heuristics
         output = event_to_output(
             event=event, video_id=self.video_id, speaker=speaker,
             speaker_confidence=speaker_conf, review_threshold=self.review_threshold,
             provenance=provenance, ocr_candidates=ocr_candidates,
+            selection_reason=selection_reason,
         )
         is_review = output.review_required
 
@@ -205,6 +211,7 @@ class DialogueExtractor:
             event=event, video_id=self.video_id, speaker=speaker,
             speaker_confidence=speaker_conf, review_threshold=self.review_threshold,
             provenance=provenance, ocr_candidates=ocr_candidates,
+            selection_reason=selection_reason,
         )
 
         json_line = json.dumps(asdict(output), ensure_ascii=False)
@@ -272,6 +279,7 @@ class DialogueExtractor:
             fusion.recognize, speaker_aliases=self.speaker_aliases,
             special_speakers=self.special_speakers,
         )
+        self._speaker_extractor = speaker_extractor  # For _parse_speaker_from_text
         known_speakers = speaker_extractor.known_speakers
 
         review_count = 0
@@ -280,6 +288,8 @@ class DialogueExtractor:
         last_dialog_crop = None
         cached_speaker = None
         cached_speaker_conf = 0.0
+        cached_dialog_candidates = None  # Persist dialog OCR candidates separately
+        cached_selection_reason = ""
 
         print(f"[start] Processing {self.video_path.name} at {self.target_fps} fps")
 
@@ -299,6 +309,9 @@ class DialogueExtractor:
                     last_dialog_crop = dialog_crop
 
                     finalized_event = event_detector.process_frame(dialog_crop_processed, timestamp)
+                    # Capture dialog OCR candidates IMMEDIATELY after dialog OCR
+                    current_dialog_candidates = fusion.get_candidates()
+                    current_selection_reason = fusion.get_selection_reason()
 
                     if finalized_event:
                         event_count += 1
@@ -312,7 +325,10 @@ class DialogueExtractor:
                         provenance = {"source_file": str(self.video_path)}
                         is_review, _ = self._process_finalized_event(
                             finalized_event, speaker, speaker_conf,
-                            frame, dialog_crop, vp, fusion, jsonl_file, provenance,
+                            frame, dialog_crop, vp,
+                            cached_dialog_candidates or current_dialog_candidates,
+                            cached_selection_reason or current_selection_reason,
+                            jsonl_file, provenance,
                         )
                         if is_review:
                             review_count += 1
@@ -322,15 +338,20 @@ class DialogueExtractor:
                         speaker_str = speaker or "?"
                         text_preview = finalized_event.text[:30] + ("..." if len(finalized_event.text) > 30 else "")
                         print(f"  [{finalized_event.event_id}] {speaker_str}: {text_preview}")
+                        cached_dialog_candidates = None
+                        cached_selection_reason = ""
+                    else:
+                        # Cache the latest dialog candidates for later use on finalization
+                        cached_dialog_candidates = current_dialog_candidates
+                        cached_selection_reason = current_selection_reason
 
                     if timestamp - last_log_time >= 30.0:
                         progress = (timestamp / duration * 100) if duration > 0 else 0
                         print(f"[progress] {timestamp:.1f}s / {duration:.1f}s ({progress:.0f}%), events: {event_count}")
                         last_log_time = timestamp
 
-                    # Cache speaker for active event
+                    # Cache speaker for active event (do NOT reset - allow inheritance)
                     if event_detector.current_event is not None and cached_speaker is None:
-                        speaker_extractor.reset()
                         name_crop = vp.crop_roi(frame, "name_box")
                         if name_crop is not None:
                             name_crop_processed = apply_profile(name_crop, name_profile)
@@ -356,7 +377,10 @@ class DialogueExtractor:
 
                     is_review, _ = self._process_finalized_event(
                         final_event, speaker, speaker_conf,
-                        final_frame, final_crop, vp, fusion, jsonl_file, provenance,
+                        final_frame, final_crop, vp,
+                        cached_dialog_candidates,
+                        cached_selection_reason,
+                        jsonl_file, provenance,
                     )
                     if is_review:
                         review_count += 1
@@ -368,8 +392,12 @@ class DialogueExtractor:
                 jsonl_file.close()
 
         if self.jsonl_path.exists():
-            convert_jsonl_to_text(self.jsonl_path, self.text_path)
-            print(f"[output] Text output: {self.text_path}")
+            convert_jsonl_to_text(self.jsonl_path, self.text_path, include_review_flagged=False)
+            # Also generate a review transcript with all events
+            review_text_path = self.output_dir / f"{self.video_id}_review.txt"
+            convert_jsonl_to_text(self.jsonl_path, review_text_path, include_review_flagged=True)
+            print(f"[output] Clean transcript: {self.text_path}")
+            print(f"[output] Review transcript: {review_text_path}")
 
         self._delete_checkpoint()
 

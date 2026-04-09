@@ -30,7 +30,9 @@ class DialogueEventOutput:
     frame_file: Optional[str] = None
     roi_crop_file: Optional[str] = None
     name_crop_file: Optional[str] = None
-    ocr_candidates: Optional[List[Dict[str, object]]] = None
+    ocr_candidates: Optional[List[Dict[str, object]]] = None,
+    selection_reason: Optional[str] = None
+    selection_reason: Optional[str] = None  # Why this OCR candidate was chosen
 
 
 def _check_text_quality(text: str) -> bool:
@@ -65,7 +67,8 @@ def event_to_output(
     speaker_confidence: float,
     review_threshold: float = 0.7,
     provenance: Optional[dict] = None,
-    ocr_candidates: Optional[List[Dict[str, object]]] = None
+    ocr_candidates: Optional[List[Dict[str, object]]] = None,
+    selection_reason: Optional[str] = None
 ) -> DialogueEventOutput:
     """
     Convert DialogueEvent to DialogueEventOutput.
@@ -111,7 +114,8 @@ def event_to_output(
         frame_file=prov.get("frame_file"),
         roi_crop_file=prov.get("roi_crop_file"),
         name_crop_file=prov.get("name_crop_file"),
-        ocr_candidates=ocr_candidates
+        ocr_candidates=ocr_candidates,
+        selection_reason=selection_reason
     )
 
 
@@ -158,7 +162,8 @@ class JSONLWriter:
         speaker: Optional[str],
         speaker_confidence: float,
         provenance: Optional[dict] = None,
-        ocr_candidates: Optional[List[Dict[str, object]]] = None
+        ocr_candidates: Optional[List[Dict[str, object]]] = None,
+    selection_reason: Optional[str] = None
     ):
         """
         Write a dialogue event to JSONL file.

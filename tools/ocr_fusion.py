@@ -27,6 +27,7 @@ class OCRFusion:
             create_ocr_func(fallback_engine) if fallback_engine else None
         )
         self._last_candidates: List[dict] = []
+        self._last_selection_reason: str = ""
 
     def recognize(self, image: Image.Image) -> tuple[str, float]:
         """Recognize text from *image* using primary (and maybe fallback) engine.
@@ -41,6 +42,7 @@ class OCRFusion:
         ]
 
         best_text, best_conf = primary_text, primary_conf
+        selection = f"primary:{self.primary_engine}"
 
         if self._fallback_fn is not None and primary_conf < self.fallback_threshold:
             fb_text, fb_conf = self._fallback_fn(image)
@@ -49,15 +51,24 @@ class OCRFusion:
             )
             if fb_conf > primary_conf:
                 best_text, best_conf = fb_text, fb_conf
+                selection = f"fallback:{self.fallback_engine}(conf {fb_conf:.3f}>{primary_conf:.3f})"
             elif fb_conf == primary_conf and len(fb_text) > len(primary_text):
                 best_text, best_conf = fb_text, fb_conf
+                selection = f"fallback:{self.fallback_engine}(longer text)"
+            else:
+                selection = f"primary:{self.primary_engine}(fallback tried, primary kept)"
 
         self._last_candidates = candidates
+        self._last_selection_reason = selection
         return best_text, best_conf
 
     def get_candidates(self) -> List[dict]:
         """Return per-engine candidates from the most recent :meth:`recognize` call."""
         return list(self._last_candidates)
+
+    def get_selection_reason(self) -> str:
+        """Return why the winning candidate was selected."""
+        return self._last_selection_reason
 
 
 if __name__ == "__main__":

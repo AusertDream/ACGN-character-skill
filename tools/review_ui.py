@@ -46,7 +46,7 @@ class ReviewServer:
             cand_html = ""
             if candidates:
                 items = "".join(
-                    f"<li>{c.get('text','')} (置信度: {c.get('confidence',0):.2f})</li>"
+                    f"<li>[{c.get('engine','?')}] {c.get('text','')} (置信度: {c.get('confidence',0):.2f})</li>"
                     for c in candidates
                 )
                 cand_html = f'<div class="field"><span class="label">OCR 候选:</span><ul>{items}</ul></div>'
@@ -58,6 +58,15 @@ class ReviewServer:
             if roi_file:
                 roi_src = f"{crops_rel}/{roi_file}"
                 roi_html = f'<div class="field"><span class="label">对话裁切:</span><br><img src="{roi_src}" class="thumb"></div>'
+            name_file = ev.get("name_crop_file") or ""
+            name_html = ""
+            if name_file:
+                name_src = f"{crops_rel}/{name_file}"
+                name_html = f'<div class="field"><span class="label">名称裁切:</span><br><img src="{name_src}" class="thumb"></div>'
+            selection_reason = ev.get("selection_reason") or ""
+            reason_html = ""
+            if selection_reason:
+                reason_html = f'<div class="field"><span class="label">选取理由:</span> {selection_reason}</div>'
             cards_html += f"""
 <div class="card" data-eid="{eid}">
   <div class="header">{eid} | {start}ms - {end}ms | 置信度: {conf:.2f}</div>
@@ -65,7 +74,7 @@ class ReviewServer:
     <input type="text" class="sp" value="{speaker}"></div>
   <div class="field"><span class="label">文本:</span>
     <textarea class="tx">{text}</textarea></div>
-  {frame_html}{roi_html}{cand_html}
+  {frame_html}{roi_html}{name_html}{cand_html}{reason_html}
   <div class="actions">
     <button class="btn accept" onclick="mark(this,'accept')">接受</button>
     <button class="btn flag" onclick="mark(this,'flag')">标记</button>
