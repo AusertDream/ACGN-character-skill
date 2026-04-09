@@ -30,9 +30,8 @@ class DialogueEventOutput:
     frame_file: Optional[str] = None
     roi_crop_file: Optional[str] = None
     name_crop_file: Optional[str] = None
-    ocr_candidates: Optional[List[Dict[str, object]]] = None,
+    ocr_candidates: Optional[List[Dict[str, object]]] = None
     selection_reason: Optional[str] = None
-    selection_reason: Optional[str] = None  # Why this OCR candidate was chosen
 
 
 def _check_text_quality(text: str) -> bool:
