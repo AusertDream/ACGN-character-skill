@@ -53,8 +53,9 @@ def event_to_output(
         DialogueEventOutput ready for JSONL serialization
     """
     # Calculate review_required based on text and speaker confidence
+    # Flag for review if: confidence below threshold OR speaker is missing
     min_confidence = min(event.confidence, speaker_confidence) if speaker else event.confidence
-    review_required = min_confidence < review_threshold
+    review_required = min_confidence < review_threshold or speaker is None
 
     # Convert timestamps from seconds to milliseconds
     start_ms = int(event.start_timestamp * 1000)

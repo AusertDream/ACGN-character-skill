@@ -108,11 +108,14 @@ def _parse_speaker_from_text(event) -> tuple:
 
     In many visual novels, the OCR captures the speaker name as the first
     word/line in the dialog box (e.g., "舰长 啊啊，异世界真好啊。").
-    This function splits the speaker from the dialog text.
+    Only splits when the candidate matches KNOWN_SPEAKERS or special speakers
+    to avoid false positives from ordinary dialog openings.
 
     Returns:
         (speaker, confidence) or (None, 0.0) if no speaker found
     """
+    from tools.speaker_extractor import DEFAULT_SPECIAL_SPEAKERS
+
     text = event.text.strip()
     if not text:
         return (None, 0.0)
@@ -121,12 +124,16 @@ def _parse_speaker_from_text(event) -> tuple:
     parts = text.split(" ", 1)
     if len(parts) == 2:
         candidate = parts[0].strip()
-        # Speaker names are typically 1-4 Chinese characters
-        if 1 <= len(candidate) <= 4 and len(parts[1].strip()) > 0:
-            # Update event text to remove speaker prefix
-            event.text = parts[1].strip()
-            # Normalize special speakers
-            from tools.speaker_extractor import DEFAULT_SPECIAL_SPEAKERS
+        remaining = parts[1].strip()
+        if not remaining:
+            return (None, 0.0)
+
+        # Only accept if candidate is a known speaker or special speaker
+        is_known = candidate in DialogueExtractor.KNOWN_SPEAKERS
+        is_special = candidate in DEFAULT_SPECIAL_SPEAKERS
+
+        if is_known or is_special:
+            event.text = remaining
             speaker = DEFAULT_SPECIAL_SPEAKERS.get(candidate, candidate)
             return (speaker, event.confidence)
 
@@ -232,13 +239,13 @@ class DialogueExtractor:
         checkpoint = self._load_checkpoint()
         start_time = 0.0
         event_count = 0
-        file_mode = "w"
 
         if checkpoint:
+            # Resume is only safe when starting fresh from a known-good timestamp.
+            # We restart the JSONL file to avoid duplicate/split events.
             start_time = checkpoint["last_processed_timestamp"]
-            event_count = checkpoint["event_count"]
-            file_mode = "a"
-            print(f"[resume] Resuming from {start_time:.1f}s, {event_count} events already processed")
+            event_count = 0  # Reset count since we overwrite the file
+            print(f"[resume] Restarting from {start_time:.1f}s (overwriting previous output)")
 
         # Initialize components
         event_detector = EventDetector(ocr_func)
@@ -250,6 +257,9 @@ class DialogueExtractor:
         last_event_timestamp = start_time
         # Track the last frame for speaker extraction on finalization
         last_frame = None
+        # Cache speaker per-event: extracted from the first frame of the event
+        cached_speaker = None
+        cached_speaker_conf = 0.0
 
         print(f"[start] Processing {self.video_path.name} at {self.target_fps} fps")
 
@@ -257,8 +267,8 @@ class DialogueExtractor:
             duration = vp.duration
             print(f"[info] Video duration: {duration:.1f}s, resolution: {vp.resolution[0]}x{vp.resolution[1]}")
 
-            # Open JSONL writer manually to control file mode
-            jsonl_file = open(self.jsonl_path, file_mode, encoding="utf-8")
+            # Open JSONL writer - always write mode (resume restarts from checkpoint)
+            jsonl_file = open(self.jsonl_path, "w", encoding="utf-8")
             writer = JSONLWriter(self.jsonl_path, self.video_id, self.review_threshold)
             writer._file = jsonl_file
 
@@ -274,6 +284,14 @@ class DialogueExtractor:
                     if dialog_crop is None:
                         continue
 
+                    # Cache speaker on first frame of a new event
+                    if event_detector.current_event is not None and cached_speaker is None:
+                        name_crop = vp.crop_roi(frame, "name_box")
+                        s, sc = speaker_extractor.extract_speaker(name_crop)
+                        if s is not None:
+                            cached_speaker = s
+                            cached_speaker_conf = sc
+
                     # Feed to event detector
                     finalized_event = event_detector.process_frame(dialog_crop, timestamp)
 
@@ -281,13 +299,17 @@ class DialogueExtractor:
                         event_count += 1
                         last_event_timestamp = timestamp
 
-                        # Try speaker from name box first
-                        name_crop = vp.crop_roi(frame, "name_box")
-                        speaker, speaker_conf = speaker_extractor.extract_speaker(name_crop)
+                        # Use cached speaker from during the event
+                        speaker = cached_speaker
+                        speaker_conf = cached_speaker_conf
 
                         # If no speaker from name box, try parsing from dialog text
                         if speaker is None:
                             speaker, speaker_conf = _parse_speaker_from_text(finalized_event)
+
+                        # Reset cache for next event
+                        cached_speaker = None
+                        cached_speaker_conf = 0.0
 
                         # Build provenance
                         provenance = {"source_file": str(self.video_path)}
