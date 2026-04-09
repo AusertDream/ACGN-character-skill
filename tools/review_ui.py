@@ -160,7 +160,11 @@ function exportCorrections() {{
                 f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
         txt_path = self.jsonl_path.with_suffix(".txt")
-        convert_jsonl_to_text(self.jsonl_path, txt_path)
+        convert_jsonl_to_text(self.jsonl_path, txt_path, include_review_flagged=False)
+        review_txt_path = self.jsonl_path.with_name(self.jsonl_path.stem + "_review.txt")
+        convert_jsonl_to_text(self.jsonl_path, review_txt_path, include_review_flagged=True)
+        print(f"[review] Clean transcript: {txt_path}")
+        print(f"[review] Review transcript: {review_txt_path}")
 
 
 if __name__ == "__main__":
