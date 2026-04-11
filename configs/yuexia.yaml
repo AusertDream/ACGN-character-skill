@@ -2,16 +2,16 @@ work_id: yuexia
 name: "月下 - 崩坏三舰长线"
 
 dialog_box:
-  x: 0.047
-  y: 0.727
-  w: 0.802
-  h: 0.157
+  x: 0.031
+  y: 0.713
+  w: 0.938
+  h: 0.185
 
 name_box:
-  x: 0.049
-  y: 0.656
-  w: 0.109
-  h: 0.072
+  x: 0.036
+  y: 0.639
+  w: 0.170
+  h: 0.074
 
 dialog_preprocess: semi_transparent
 name_preprocess: default

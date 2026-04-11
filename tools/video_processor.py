@@ -90,7 +90,19 @@ class VideoProcessor:
             self.container.seek(seek_target, stream=self.stream)
 
             try:
-                frame = next(self.container.decode(video=0))
+                # Decode frames until we reach one at or after our target time
+                frame = None
+                for candidate in self.container.decode(video=0):
+                    frame_time = float(candidate.pts * self.stream.time_base)
+                    if frame_time >= current_time - 0.1:
+                        frame = candidate
+                        break
+                    # Safety: don't decode more than 2s ahead
+                    if frame_time > current_time + 2.0:
+                        frame = candidate
+                        break
+                if frame is None:
+                    frame = next(self.container.decode(video=0))
                 img = frame.to_image()
                 yield (current_time, img)
             except StopIteration:

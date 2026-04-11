@@ -38,6 +38,7 @@ class DialogueEvent:
     text_history: List[str] = field(default_factory=list)
     confidence_history: List[float] = field(default_factory=list)
     stable_frames: int = 0
+    _was_growing: bool = False
 
     def add_observation(self, text: str, confidence: float, timestamp: float):
         """Add OCR observation to event."""
@@ -69,7 +70,8 @@ class EventDetector:
         stable_frames_threshold: int = 3,
         empty_frames_threshold: int = 2,
         min_text_length: int = 2,
-        similarity_threshold: float = 0.6
+        similarity_threshold: float = 0.6,
+        post_growth_stable_threshold: int = 5
     ):
         """
         Initialize event detector.
@@ -80,12 +82,16 @@ class EventDetector:
             empty_frames_threshold: Empty frames needed to finalize event
             min_text_length: Minimum text length to consider valid
             similarity_threshold: Minimum similarity ratio for fuzzy prefix matching
+            post_growth_stable_threshold: Stable frames needed after text was growing
+                (typewriter effect). Higher than stable_frames_threshold to avoid
+                premature finalization during typewriter pauses. Default 5 (2.5s at 2fps).
         """
         self.ocr_func = ocr_func
         self.stable_frames_threshold = stable_frames_threshold
         self.empty_frames_threshold = empty_frames_threshold
         self.min_text_length = min_text_length
         self.similarity_threshold = similarity_threshold
+        self.post_growth_stable_threshold = post_growth_stable_threshold
 
         self.current_event: Optional[DialogueEvent] = None
         self.event_counter = 0
@@ -184,11 +190,19 @@ class EventDetector:
         if self._is_text_growing(text):
             self.current_event.state = EventState.GROWING
             self.current_event.stable_frames = 0
+            self.current_event._was_growing = True
         else:
             # Text not growing, check stability
             self.current_event.stable_frames += 1
 
-            if self.current_event.stable_frames >= self.stable_frames_threshold:
+            # Use higher threshold if event went through GROWING state
+            threshold = (
+                self.post_growth_stable_threshold
+                if self.current_event._was_growing
+                else self.stable_frames_threshold
+            )
+
+            if self.current_event.stable_frames >= threshold:
                 self.current_event.state = EventState.STABLE
                 return self._finalize_event(timestamp)
 
@@ -314,6 +328,7 @@ if __name__ == "__main__":
     print("=" * 50)
 
     # --- Test 1: Basic typewriter with exact prefix ---
+    # With post_growth_stable_threshold=5, growing text needs 5 stable frames
     print("\n[Test 1] Basic typewriter (exact prefix)")
     ocr_seq = [
         ("", 0.95),
@@ -322,6 +337,9 @@ if __name__ == "__main__":
         ("你好世界", 0.96),
         ("你好世界", 0.95),
         ("你好世界", 0.95),
+        ("你好世界", 0.95),
+        ("你好世界", 0.95),
+        ("你好世界", 0.95),  # 5th stable frame -> finalize
         ("", 0.0),
         ("", 0.0),
     ]
@@ -334,17 +352,20 @@ if __name__ == "__main__":
         return r
 
     detector = EventDetector(ocr_basic)
+    finalized_event = None
     for i in range(len(ocr_seq)):
         ts = i * 0.5
         event = detector.process_frame(dummy_image, ts)
         if event:
+            finalized_event = event
             print(f"  [FINALIZED] {event.event_id}: '{event.text}' conf={event.confidence:.2f}")
     final = detector.flush(len(ocr_seq) * 0.5)
     if final:
         print(f"  [FLUSHED] {final.event_id}: '{final.text}' conf={final.confidence:.2f}")
-    print("  PASS" if not detector.current_event else "  FAIL: event still active")
+    print("  PASS" if finalized_event and finalized_event.text == "你好世界" else "  FAIL: expected finalized '你好世界'")
 
     # --- Test 2: Fuzzy prefix growth (OCR noise) ---
+    # Growing event needs post_growth_stable_threshold=5 stable frames
     print("\n[Test 2] Fuzzy prefix growth (OCR noise)")
     ocr_seq = [
         ("你好", 0.90),
@@ -352,8 +373,9 @@ if __name__ == "__main__":
         ("你好世界", 0.93),
         ("你好世界", 0.94),
         ("你好世界", 0.95),
-        ("", 0.0),
-        ("", 0.0),
+        ("你好世界", 0.95),
+        ("你好世界", 0.95),
+        ("你好世界", 0.95),  # 5th stable frame -> finalize
     ]
     idx = 0
 
@@ -365,15 +387,18 @@ if __name__ == "__main__":
 
     detector = EventDetector(ocr_fuzzy, similarity_threshold=0.5)
     growing_detected = False
+    finalized_event = None
     for i in range(len(ocr_seq)):
         ts = i * 0.5
         event = detector.process_frame(dummy_image, ts)
         if detector.current_event and detector.current_event.state == EventState.GROWING:
             growing_detected = True
         if event:
+            finalized_event = event
             print(f"  [FINALIZED] {event.event_id}: '{event.text}' conf={event.confidence:.2f}")
     final = detector.flush(len(ocr_seq) * 0.5)
     if final:
+        finalized_event = final
         print(f"  [FLUSHED] {final.event_id}: '{final.text}' conf={final.confidence:.2f}")
     print(f"  Growing detected: {growing_detected}")
     print("  PASS" if growing_detected else "  FAIL: fuzzy growth not detected")
@@ -421,3 +446,64 @@ if __name__ == "__main__":
     merged, conf = detector._merge_text_candidates(history, confs)
     print(f"  Merged: '{merged}' conf={conf:.2f}")
     print("  PASS" if merged == "你好世界" else f"  FAIL: expected '你好世界', got '{merged}'")
+
+    # --- Test 5: Growing event NOT finalized with only 3 stable frames ---
+    # This is the core regression test: typewriter text should NOT finalize
+    # after just 3 stable frames (old behavior). It needs 5 (post_growth_stable_threshold).
+    print("\n[Test 5] Growing event survives 3 stable frames (post_growth_stable_threshold)")
+    ocr_seq = [
+        ("你好", 0.95),
+        ("你好世", 0.93),      # growing
+        ("你好世界", 0.96),    # growing
+        ("你好世界", 0.95),    # stable 1
+        ("你好世界", 0.95),    # stable 2
+        ("你好世界", 0.95),    # stable 3 -> old code would finalize here
+    ]
+    idx = 0
+
+    def ocr_post_growth(img):
+        global idx
+        r = ocr_seq[idx]
+        idx += 1
+        return r
+
+    detector = EventDetector(ocr_post_growth)
+    premature_finalize = False
+    for i in range(len(ocr_seq)):
+        ts = i * 0.5
+        event = detector.process_frame(dummy_image, ts)
+        if event:
+            premature_finalize = True
+    # Event should still be active (not finalized) after only 3 stable frames
+    still_active = detector.current_event is not None
+    was_growing = detector.current_event._was_growing if detector.current_event else False
+    print(f"  Event still active: {still_active}, was_growing: {was_growing}")
+    print("  PASS" if still_active and not premature_finalize and was_growing else "  FAIL: event should still be active after 3 stable frames")
+
+    # --- Test 6: Non-growing event still uses normal threshold (3 frames) ---
+    # Text that appears all at once (no typewriter) should finalize after 3 stable frames.
+    print("\n[Test 6] Non-growing event uses stable_frames_threshold=3")
+    ocr_seq = [
+        ("一段完整台词", 0.95),   # appears all at once
+        ("一段完整台词", 0.95),   # stable 1
+        ("一段完整台词", 0.95),   # stable 2
+        ("一段完整台词", 0.95),   # stable 3 -> should finalize (no growth)
+    ]
+    idx = 0
+
+    def ocr_no_growth(img):
+        global idx
+        r = ocr_seq[idx]
+        idx += 1
+        return r
+
+    detector = EventDetector(ocr_no_growth)
+    finalized_event = None
+    for i in range(len(ocr_seq)):
+        ts = i * 0.5
+        event = detector.process_frame(dummy_image, ts)
+        if event:
+            finalized_event = event
+            print(f"  [FINALIZED] {event.event_id}: '{event.text}' conf={event.confidence:.2f}")
+    print(f"  Finalized: {finalized_event is not None}")
+    print("  PASS" if finalized_event and finalized_event.text == "一段完整台词" else "  FAIL: non-growing event should finalize after 3 stable frames")
