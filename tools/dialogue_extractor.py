@@ -225,16 +225,52 @@ class DialogueExtractor:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _normalize_for_merge(text: str) -> str:
+        """Normalize punctuation for prefix matching."""
+        replacements = [
+            ("（", "("), ("）", ")"), ("。", "."), ("，", ","),
+            ("！", "!"), ("？", "?"), ("：", ":"), ("；", ";"),
+            ("～", "~"), ("…", "..."), ("—", "-"), ("\u3000", " "),
+        ]
+        for src, dst in replacements:
+            text = text.replace(src, dst)
+        return text
+
+    @staticmethod
     def _is_prefix_of(shorter: str, longer: str, threshold: float = 0.65) -> bool:
         """Check if shorter text is a fuzzy prefix of longer text."""
         if len(shorter) >= len(longer):
             return False
         if len(shorter) < 2:
             return False
-        # Check if shorter is a prefix of the beginning of longer
-        prefix_portion = longer[:len(shorter)]
-        sim = SequenceMatcher(None, shorter, prefix_portion).ratio()
-        return sim >= threshold
+        # Normalize punctuation before comparison
+        shorter_n = DialogueExtractor._normalize_for_merge(shorter)
+        longer_n = DialogueExtractor._normalize_for_merge(longer)
+        prefix_portion = longer_n[:len(shorter_n)]
+        sim = SequenceMatcher(None, shorter_n, prefix_portion).ratio()
+        # Lower threshold for very short texts (<=5 chars are likely fragments)
+        effective_threshold = threshold - 0.2 if len(shorter) <= 5 else threshold
+        return sim >= effective_threshold
+
+    @staticmethod
+    def _is_battle_text(text: str) -> bool:
+        """Detect battle/HUD text that should be filtered out."""
+        import re
+        text = text.strip()
+        if not text:
+            return False
+        # Patterns: "2635/2635", "HP 100/100", pure numbers, score displays, alphanumeric HUD
+        if re.match(r'^[\d\s/]+$', text):
+            return True
+        if re.match(r'^\d+\s*/\s*\d+', text):
+            return True
+        if re.match(r'^[A-Z0-9]{2,}\d*$', text):  # "27HV2", "HP100", "LV50"
+            return True
+        if re.match(r'^[A-Z]{2,}\s*\d', text):
+            return True
+        if len(text) <= 3 and any(c.isdigit() for c in text):
+            return True
+        return False
 
     def _merge_prefix_events(self) -> int:
         """Merge typewriter prefix fragment events in the JSONL file.
@@ -295,14 +331,30 @@ class DialogueExtractor:
 
         merged_count = original_count - len(merged)
 
-        if merged_count > 0:
-            # Write merged events back
-            with open(self.jsonl_path, "w", encoding="utf-8") as f:
-                for evt in merged:
-                    f.write(json.dumps(evt, ensure_ascii=False) + "\n")
-            print(f"[merge] Removed {merged_count} typewriter fragment events ({original_count} -> {len(merged)})")
+        # Filter out battle/HUD text events
+        battle_count = 0
+        filtered = []
+        for evt in merged:
+            if self._is_battle_text(evt.get("text", "")):
+                battle_count += 1
+            else:
+                filtered.append(evt)
 
-        return merged_count
+        total_removed = original_count - len(filtered)
+
+        if total_removed > 0:
+            # Write filtered events back
+            with open(self.jsonl_path, "w", encoding="utf-8") as f:
+                for evt in filtered:
+                    f.write(json.dumps(evt, ensure_ascii=False) + "\n")
+            parts = []
+            if merged_count > 0:
+                parts.append(f"{merged_count} typewriter fragments")
+            if battle_count > 0:
+                parts.append(f"{battle_count} battle/HUD texts")
+            print(f"[merge] Removed {' + '.join(parts)} ({original_count} -> {len(filtered)})")
+
+        return total_removed
 
     # ------------------------------------------------------------------
     # Main pipeline
