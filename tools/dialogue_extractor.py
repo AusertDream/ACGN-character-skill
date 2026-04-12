@@ -9,6 +9,7 @@ processing pipeline with resume support.
 import json
 import argparse
 from dataclasses import asdict
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Set
 from PIL import Image
@@ -220,6 +221,90 @@ class DialogueExtractor:
         return is_review, output
 
     # ------------------------------------------------------------------
+    # Post-hoc prefix merge
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_prefix_of(shorter: str, longer: str, threshold: float = 0.65) -> bool:
+        """Check if shorter text is a fuzzy prefix of longer text."""
+        if len(shorter) >= len(longer):
+            return False
+        if len(shorter) < 2:
+            return False
+        # Check if shorter is a prefix of the beginning of longer
+        prefix_portion = longer[:len(shorter)]
+        sim = SequenceMatcher(None, shorter, prefix_portion).ratio()
+        return sim >= threshold
+
+    def _merge_prefix_events(self) -> int:
+        """Merge typewriter prefix fragment events in the JSONL file.
+
+        Reads all events, sorts by start_ms, and merges adjacent pairs
+        where the earlier event's text is a fuzzy prefix of the later
+        event's text (same speaker, gap < 5s). The merged event keeps
+        the later (longer) text and the earlier start time.
+
+        Returns the count of merged (removed) events.
+        """
+        if not self.jsonl_path.exists():
+            return 0
+
+        # Read all events
+        events = []
+        with open(self.jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                events.append(json.loads(line))
+
+        if len(events) < 2:
+            return 0
+
+        original_count = len(events)
+
+        # Sort by start_ms
+        events.sort(key=lambda e: e.get("start_ms", 0))
+
+        merged = []
+        i = 0
+        while i < len(events):
+            if i + 1 < len(events):
+                curr = events[i]
+                nxt = events[i + 1]
+
+                curr_text = curr.get("text", "")
+                nxt_text = nxt.get("text", "")
+                curr_speaker = curr.get("speaker", "")
+                nxt_speaker = nxt.get("speaker", "")
+                curr_end = curr.get("end_ms", 0)
+                nxt_start = nxt.get("start_ms", 0)
+                time_gap_ms = nxt_start - curr_end
+
+                if (self._is_prefix_of(curr_text, nxt_text)
+                        and time_gap_ms < 5000
+                        and curr_speaker == nxt_speaker):
+                    # Merge: keep nxt's text, use curr's start_ms
+                    nxt["start_ms"] = curr.get("start_ms", nxt.get("start_ms", 0))
+                    merged.append(nxt)
+                    i += 2  # Skip both, nxt already added
+                    continue
+
+            merged.append(events[i])
+            i += 1
+
+        merged_count = original_count - len(merged)
+
+        if merged_count > 0:
+            # Write merged events back
+            with open(self.jsonl_path, "w", encoding="utf-8") as f:
+                for evt in merged:
+                    f.write(json.dumps(evt, ensure_ascii=False) + "\n")
+            print(f"[merge] Removed {merged_count} typewriter fragment events ({original_count} -> {len(merged)})")
+
+        return merged_count
+
+    # ------------------------------------------------------------------
     # Main pipeline
     # ------------------------------------------------------------------
 
@@ -390,6 +475,11 @@ class DialogueExtractor:
                     print(f"  [{final_event.event_id}] {speaker_str}: {text_preview}")
             finally:
                 jsonl_file.close()
+
+        # Post-hoc: merge typewriter prefix fragments
+        merged_count = self._merge_prefix_events()
+        if merged_count > 0:
+            event_count -= merged_count
 
         if self.jsonl_path.exists():
             convert_jsonl_to_text(self.jsonl_path, self.text_path, include_review_flagged=False)

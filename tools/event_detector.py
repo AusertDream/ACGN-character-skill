@@ -213,16 +213,16 @@ class EventDetector:
         if len(self.current_event.text_history) < 2:
             return False
 
-        # text_history[-1] is new_text itself (already added), so compare with [-2]
-        prev_text = self.current_event.text_history[-2]
-
-        if len(new_text) <= len(prev_text):
-            return False
-
-        # Extract the overlapping portion from new_text
-        overlap = new_text[:len(prev_text)]
-        ratio = SequenceMatcher(None, prev_text, overlap).ratio()
-        return ratio >= self.similarity_threshold
+        # Look back up to 3 frames to detect growth even with OCR noise
+        lookback = min(3, len(self.current_event.text_history) - 1)
+        for offset in range(1, lookback + 1):
+            prev_text = self.current_event.text_history[-(offset + 1)]
+            if len(new_text) > len(prev_text):
+                overlap = new_text[:len(prev_text)]
+                ratio = SequenceMatcher(None, prev_text, overlap).ratio()
+                if ratio >= self.similarity_threshold:
+                    return True
+        return False
 
     def _is_text_replacement(self, new_text: str) -> bool:
         """Detect when text is replaced with completely different content."""
