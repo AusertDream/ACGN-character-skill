@@ -38,3 +38,10 @@ nul
 .vscode/
 *.swp
 *.swo
+
+# Generated review frames and temp files
+benchmark/gold_standard/review_frames/
+benchmark/gold_standard/manual_annotation_frames/
+benchmark/gold_standard/review_notes.jsonl
+benchmark/bbox_analysis.json
+benchmark/event_*.txt
