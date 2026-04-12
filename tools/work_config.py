@@ -47,6 +47,10 @@ def validate_roi(roi: dict, label: str) -> None:
             raise ValueError(f"{label}.{key}={v} must be a number in [0, 1]")
     if roi["w"] * roi["h"] <= 0:
         raise ValueError(f"{label}: area must be > 0 (w={roi['w']}, h={roi['h']})")
+    if roi["x"] + roi["w"] > 1.0:
+        raise ValueError(f"{label}: x + w = {roi['x'] + roi['w']:.3f} exceeds 1.0 (out of bounds)")
+    if roi["y"] + roi["h"] > 1.0:
+        raise ValueError(f"{label}: y + h = {roi['y'] + roi['h']:.3f} exceeds 1.0 (out of bounds)")
 
 
 def load_work_config(config_path: Path) -> WorkConfig:

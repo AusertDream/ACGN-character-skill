@@ -48,19 +48,14 @@ class DialogueExtractor:
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config not found: {self.config_path}")
 
-        # Try loading as WorkConfig first, fall back to plain ROI config
+        # Load and validate WorkConfig — fail hard on invalid config
         self.work_config = None
         self._config_dict: Dict[str, Any] = {}
-        try:
-            from tools.work_config import load_work_config
-            self.work_config = load_work_config(self.config_path)
-            import yaml
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                self._config_dict = yaml.safe_load(f) or {}
-        except (ValueError, KeyError):
-            import yaml
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                self._config_dict = yaml.safe_load(f) or {}
+        from tools.work_config import load_work_config
+        self.work_config = load_work_config(self.config_path)
+        import yaml
+        with open(self.config_path, "r", encoding="utf-8") as f:
+            self._config_dict = yaml.safe_load(f) or {}
 
         # Pull values from config, CLI args override
         if self.work_config:
@@ -440,7 +435,10 @@ class DialogueExtractor:
                     last_frame = frame
                     dialog_crop = vp.crop_roi(frame, "dialog_box")
                     if dialog_crop is None:
-                        continue
+                        raise RuntimeError(
+                            "dialog_box ROI crop returned None. "
+                            "Check dialog_box coordinates in your config file."
+                        )
 
                     dialog_crop_processed = apply_profile(dialog_crop, dialog_profile)
                     last_dialog_crop = dialog_crop
