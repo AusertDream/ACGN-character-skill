@@ -1,5 +1,5 @@
 ---
-name: create-character
+name: ACGN-character.skill
 description: "将虚构角色蒸馏成 AI Skill。支持视频/文本数据导入，生成角色设定 + 人格，支持持续进化。"
 argument-hint: "[character-name-or-slug]"
 version: "1.0.0"
