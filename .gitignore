@@ -45,3 +45,12 @@ benchmark/gold_standard/manual_annotation_frames/
 benchmark/gold_standard/review_notes.jsonl
 benchmark/bbox_analysis.json
 benchmark/event_*.txt
+
+# Benchmark generated artifacts (images, videos, crops)
+benchmark/gold_standard/verified_output/crops/
+benchmark/gold_standard/verified_output/*.png
+benchmark/gold_standard/verified_output/*.jpg
+benchmark/gold_standard/sample_frames/
+benchmark/gold_standard/*.mp4
+benchmark/gold_standard/*.avi
+benchmark/gold_standard/*.mkv
