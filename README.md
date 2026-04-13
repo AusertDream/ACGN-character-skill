@@ -25,54 +25,88 @@
 
 </div>
 
-**Notice:**
-
-**目前效果并不完善，同时记忆相较于完整舰长线仍有大幅缺失。目前采用的是语音提取为文本作为角色故事用于蒸馏，然而部分剧情没有语音，需要通过视觉方案来获取对话文本，缺失部分在之后的计划之内。**
-
----
-
 ## 这个项目做了什么
 
 colleague-skill 的核心思路是将一个真实同事的专业能力和人格特征分别提取、结构化，然后合并为一个可执行的 AI Skill。本项目将这一方法迁移到虚构角色领域：用视频转录替代聊天记录采集，用角色设定（Story）替代工作能力（Work），用适配后的5层人格模型捕捉角色的说话方式、情感模式和行为准则。
 
-整个流程：游戏剧情视频 → OCR/Whisper 对话提取 → 角色信息提取 → 结构化生成 → 可对话的角色 Skill。
+整个流程：游戏剧情视频 → OCR 对话提取 → 角色信息提取 → 结构化生成 → 可对话的角色 Skill。
+
+---
+
+## 当前能力
+
+### 视频对话提取工具（tools/dialogue_extractor.py）
+
+基于 OCR-first 方案，从 ACGN 视觉小说风格视频中提取对话台本：
+
+- **对话事件检测**：状态机驱动（IDLE → DETECTED → GROWING → STABLE → FINALIZED），围绕"对话事件"而非单帧识别
+- **打字机效果处理**：前缀增长检测 + 事后合并，189 个原始帧事件合并为 116 个完整对话事件
+- **ROI 精准识别**：只对名字框和对话框区域做 OCR，支持每部作品独立配置（tools/configs/）
+- **多引擎 OCR 融合**：PaddleOCR 主引擎 + EasyOCR 备用，置信度加权融合
+- **半透明背景预处理**：多种预处理 profile（plain_light_bg / plain_dark_bg / semi_transparent_hsv / outline_heavy）
+- **说话人识别**：名字框 OCR + 角色别名词典 + 上下文继承
+- **战斗/HUD 文本过滤**：正则过滤战斗演出、分数显示等非对话内容
+- **低置信度标记**：review_required 字段标记，5/116 事件（4.31%）需人工复核
+- **结构化输出**：JSONL（含 event_id、时间戳、speaker、text、confidence、review_required、provenance）+ 纯文本台本（[HH:MM:SS] Speaker: Dialogue 格式）
+- **断点续跑**：支持中断后从上次位置继续处理
+- **人工复核 UI**：review_server.py 提供 Web 界面，展示关键帧、ROI 图、OCR 候选
+
+**benchmark 验证结果（崩坏3仲夏幻夜，10分钟片段）：**
+
+| 指标 | 值 | 目标 | 状态 |
+|------|-----|------|------|
+| Recall（时间重叠匹配） | 100% (116/116) | ≥90% | PASS |
+| Mean CER | 6.64% | user-agreed | PASS |
+| Duplicate rate | 0% | <10% | PASS |
+| Review rate | 4.31% | <5% | PASS |
+| False positives | 0 | 0 | PASS |
+
+### 角色 Skill 创建器（SKILL.md）
+
+- 从视频转录文本提取角色设定（Story）和五层人格（Persona）
+- 支持增量更新：追加新视频数据自动 merge
+- 支持对话纠正：说"她不会这样说"自动写入 Correction 记录
+
+---
+
+## 计划中的能力
+
+### 近期
+- **ASR 辅助校对**：对有配音的事件用 Whisper 提供文本校对候选，降低 OCR 错字率
+- **VLM 兜底**：低置信度事件调用多模态 API（需配置 API key），处理半透明/特效字幕等难例
+
+### 中期
+- **Anime 支持**：动画视频的字幕提取（硬字幕 + 软字幕）
+- **Comic 支持**：漫画图片的对话框文字提取
+- **Novel 支持**：轻小说/视觉小说文本文件直接导入
+
+### 长期
+- **多作品批量管理**：任务队列、进度追踪、质量报表
+- **脚本匹配增强**：若有现成剧本，OCR 结果与脚本模糊匹配提纯
 
 ---
 
 ## 项目结构
 
 ```
-yuexia-skill/
-├── SKILL.md                    # 角色 Skill 创建器入口
+ACGN-character-skill/
+├── SKILL.md                    # 角色 Skill 创建器入口（/ACGN-character.skill）
 ├── prompts/                    # Prompt 模板
-│   ├── intake.md               #   角色信息录入（3问）
 │   ├── story_analyzer.md       #   角色设定提取
-│   ├── story_builder.md        #   story.md 生成模板
 │   ├── persona_analyzer.md     #   角色人格提取
-│   ├── persona_builder.md      #   persona.md 五层结构模板
-│   ├── merger.md               #   增量更新逻辑
-│   └── correction_handler.md   #   对话纠正处理
+│   └── ...
 ├── tools/
-│   ├── video_transcriber.py    #   视频转录工具（Whisper + ffmpeg）
 │   ├── dialogue_extractor.py   #   OCR 对话提取主入口
 │   ├── event_detector.py       #   对话事件检测状态机
-│   ├── ocr_engines.py          #   OCR 引擎封装
-│   ├── ocr_fusion.py           #   多引擎 OCR 融合
-│   ├── output_formatter.py     #   输出格式化与 review 标记
-│   ├── preprocessing.py        #   图像预处理
-│   ├── review_ui.py            #   低置信度事件 review UI
-│   ├── speaker_extractor.py    #   说话人识别
-│   ├── text_output.py          #   纯文本输出
-│   ├── video_processor.py      #   视频帧提取
-│   ├── work_config.py          #   per-work 配置加载
+│   ├── video_transcriber.py    #   视频转录工具（Whisper）
 │   └── configs/
 │       └── yuexia.yaml         #   月下 ROI 配置
-└── characters/
-    └── yuexia/                 #   月下的生成产物
-        ├── story.md            #     Part A — 角色设定
-        ├── persona.md          #     Part B — 五层人格
-        ├── SKILL.md            #     合并后的可执行 Skill
-        └── meta.json           #     元数据
+├── characters/
+│   └── yuexia/                 #   月下的生成产物（/character-yuexia）
+│       ├── SKILL.md
+│       ├── story.md
+│       └── persona.md
+└── benchmark/                  #   评估数据与脚本
 ```
 
 另有以下数据目录（视频文件不纳入版本控制）：
