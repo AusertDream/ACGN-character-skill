@@ -96,43 +96,25 @@ models/                         # Whisper 模型缓存（gitignored）
 
 ## 安装与使用
 
-### 安装到当前项目
-
-在 git 仓库根目录执行：
+### 安装 Skill
 
 ```bash
-mkdir -p .claude/skills
-# Windows (mklink) 或 Linux/Mac (ln -s)
-ln -s "$(pwd)/yuexia-skill/characters/yuexia" .claude/skills/character-yuexia
+# 克隆仓库
+git clone https://github.com/your-username/ACGN-character-skill.git
+
+# 安装角色创建器（全局）
+ln -s /path/to/ACGN-character-skill ~/.claude/skills/acgn-character-skill
+
+# 安装月下角色（全局）
+ln -s /path/to/ACGN-character-skill/characters/yuexia ~/.claude/skills/character-yuexia
 ```
 
-### 安装到全局（所有项目可用）
-
-```bash
-ln -s /path/to/yuexia-skill/characters/yuexia ~/.claude/skills/character-yuexia
-```
-
-### 使用方式
-
-安装完成后，在 Claude Code 中新开一个会话，即可使用：
+安装完成后，在 Claude Code 中：
 
 ```
-# 直接触发月下的角色扮演
-/character-yuexia
-
-# 之后直接对话即可，月下会以第一人称回应
-你好
-今晚的月色很美呢
-明天去不去吼姆乐园玩
+/acgn-character-skill    # 创建新角色 Skill
+/character-yuexia        # 与月下对话
 ```
-
-如果角色扮演过程中发现某些回答不符合角色，可以直接纠正：
-
-```
-她不会这样说，她应该是直接表达想去
-```
-
-系统会自动将纠正写入 Correction 记录，下次对话立即生效。
 
 ---
 
