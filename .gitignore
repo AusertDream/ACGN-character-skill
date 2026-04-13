@@ -54,3 +54,4 @@ benchmark/gold_standard/sample_frames/
 benchmark/gold_standard/*.mp4
 benchmark/gold_standard/*.avi
 benchmark/gold_standard/*.mkv
+benchmark/
