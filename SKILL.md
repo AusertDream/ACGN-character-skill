@@ -11,6 +11,37 @@ allowed-tools: Read, Write, Edit, Bash
 >
 > 本 Skill 支持中英文。根据用户第一条消息的语言，全程使用同一语言回复。下方提供了两种语言的指令，按用户语言选择对应版本执行。
 
+## 路由逻辑 / Routing Logic
+
+**本 Skill 是一个统一入口，根据参数决定行为模式。**
+
+### 参数解析规则
+
+当用户调用 `/ACGN-character {arg}` 时：
+
+1. **角色对话模式**：如果 `{arg}` 是一个已存在的角色名（即 `${CLAUDE_SKILL_DIR}/characters/{arg}/SKILL.md` 存在），则：
+   - 用 `Read` 工具读取 `${CLAUDE_SKILL_DIR}/characters/{arg}/SKILL.md` 的全部内容
+   - 完全按照该文件中的指令行事，进入角色扮演模式
+   - 不再执行下方的创建器流程
+
+2. **创建器模式**：如果 `{arg}` 不存在于 characters 目录，或者用户没有传参数，或者用户明确表达要创建/管理角色（如"新建角色"、"list"），则进入下方的创建器流程。
+
+### 执行步骤
+
+收到调用后，**首先执行以下检查**：
+
+```bash
+ls ${CLAUDE_SKILL_DIR}/characters/
+```
+
+获取所有可用角色列表。然后：
+
+- 如果用户传了参数且匹配到某个角色目录名 → 进入角色对话模式
+- 如果用户传了参数但不匹配 → 提示"角色 {arg} 不存在"并列出可用角色，询问是否要创建
+- 如果用户没传参数 → 列出可用角色供选择，或进入创建器流程
+
+---
+
 # 角色.skill 创建器（Claude Code 版）
 
 ## 触发条件
@@ -37,7 +68,7 @@ allowed-tools: Read, Write, Edit, Bash
 
 | 任务 | 使用工具 |
 |------|---------|
-| 视频文件转录 | `Bash` → `python3 ${CLAUDE_SKILL_DIR}/tools/video_transcriber.py` |
+| 视频对话提取（OCR） | `Bash` → `python3 -m tools.dialogue_extractor` （需在项目根目录运行） |
 | 读取 PDF 文档 | `Read` 工具（原生支持 PDF） |
 | 读取图片截图 | `Read` 工具（原生支持图片） |
 | 读取 MD/TXT 文件 | `Read` 工具 |
@@ -70,8 +101,9 @@ allowed-tools: Read, Write, Edit, Bash
 ```
 原材料怎么提供？
 
-  [A] 视频文件转录
-      提供视频文件路径，自动转录为文本
+  [A] 视频对话提取（OCR）
+      提供视频文件路径或目录，用 OCR 管线提取游戏/VN 对话
+      需要对应作品的 ROI 配置文件（configs/*.yaml）
       支持 mp4/mkv/avi/webm 等格式
 
   [B] 上传文本文件
@@ -86,20 +118,32 @@ allowed-tools: Read, Write, Edit, Bash
 
 ---
 
-#### 方式 A：视频文件转录
+#### 方式 A：视频对话提取（OCR）
 
-用户提供视频文件路径后，调用转录工具：
+用户提供视频文件路径后，先确认是否有对应作品的 ROI 配置文件（`${CLAUDE_SKILL_DIR}/tools/configs/` 目录下）。如果没有，提示用户先用 `roi_calibrator.py` 校准 ROI 区域。
+
+单个视频：
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/tools/video_transcriber.py \
-  --input "{video_path}" \
-  --output ./knowledge/{slug}/transcript.txt
+cd ${CLAUDE_SKILL_DIR}
+python3 -m tools.dialogue_extractor "{video_path}" tools/configs/{work_id}.yaml \
+  --output-dir ./characters/{slug}/knowledge
 ```
 
-转录完成后用 `Read` 读取 `knowledge/{slug}/transcript.txt`。
+批量处理（目录下所有视频）：
+```bash
+cd ${CLAUDE_SKILL_DIR}
+python3 -m tools.dialogue_extractor "{video_dir}" tools/configs/{work_id}.yaml \
+  --output-dir ./characters/{slug}/knowledge --batch --video-pattern "*.mp4"
+```
 
-如果转录失败，常见原因：
-- 缺少 ffmpeg：提示用户安装
-- 文件格式不支持：提示转换为 mp4
+提取完成后，用 `Read` 读取 `characters/{slug}/knowledge/` 下的 `.jsonl` 输出文件。也可以用 `text_output.py` 转换为纯文本格式方便分析：
+```bash
+python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
+```
+
+如果 OCR 提取失败，常见原因：
+- 缺少 PaddleOCR / PaddlePaddle：提示用户安装
+- ROI 配置不匹配：提示用 roi_calibrator.py 重新校准
 - 或改用方式 B/C
 
 ---
@@ -242,7 +286,7 @@ user-invocable: true
 角色 Skill 已创建！
 
 文件位置：characters/{slug}/
-触发词：/{slug}（完整版）
+触发词：/ACGN-character {slug}
 
 如果用起来感觉哪里不对，直接说"她不会这样"，我来更新。
 ```
@@ -328,7 +372,7 @@ This Skill runs in the Claude Code environment with the following tools:
 
 | Task | Tool |
 |------|------|
-| Video file transcription | `Bash` → `python3 ${CLAUDE_SKILL_DIR}/tools/video_transcriber.py` |
+| Video dialogue extraction (OCR) | `Bash` → `python3 -m tools.dialogue_extractor` (run from project root) |
 | Read PDF documents | `Read` tool (native PDF support) |
 | Read image screenshots | `Read` tool (native image support) |
 | Read MD/TXT files | `Read` tool |
@@ -361,8 +405,9 @@ Ask the user how they'd like to provide materials:
 ```
 How would you like to provide source materials?
 
-  [A] Video File Transcription
-      Provide video file path, auto-transcribe to text
+  [A] Video Dialogue Extraction (OCR)
+      Provide video file path or directory, extract game/VN dialogue via OCR pipeline
+      Requires a matching ROI config file (configs/*.yaml)
       Supports mp4/mkv/avi/webm formats
 
   [B] Upload Text Files
@@ -377,20 +422,32 @@ Can mix and match, or skip entirely (generate from manual info only).
 
 ---
 
-#### Option A: Video File Transcription
+#### Option A: Video Dialogue Extraction (OCR)
 
-After user provides a video file path, call the transcription tool:
+After user provides a video file path, first check if a matching ROI config exists (`${CLAUDE_SKILL_DIR}/tools/configs/` directory). If not, prompt user to calibrate ROI regions using `roi_calibrator.py`.
+
+Single video:
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/tools/video_transcriber.py \
-  --input "{video_path}" \
-  --output ./knowledge/{slug}/transcript.txt
+cd ${CLAUDE_SKILL_DIR}
+python3 -m tools.dialogue_extractor "{video_path}" tools/configs/{work_id}.yaml \
+  --output-dir ./characters/{slug}/knowledge
 ```
 
-After transcription, `Read` the output file `knowledge/{slug}/transcript.txt`.
+Batch processing (all videos in a directory):
+```bash
+cd ${CLAUDE_SKILL_DIR}
+python3 -m tools.dialogue_extractor "{video_dir}" tools/configs/{work_id}.yaml \
+  --output-dir ./characters/{slug}/knowledge --batch --video-pattern "*.mp4"
+```
 
-If transcription fails, common reasons:
-- Missing ffmpeg: prompt user to install
-- Unsupported format: prompt conversion to mp4
+After extraction, `Read` the `.jsonl` output files in `characters/{slug}/knowledge/`. You can also convert to plain text for analysis:
+```bash
+python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
+```
+
+If OCR extraction fails, common reasons:
+- Missing PaddleOCR / PaddlePaddle: prompt user to install
+- ROI config mismatch: prompt user to recalibrate with roi_calibrator.py
 - Or switch to Option B/C
 
 ---
@@ -533,7 +590,7 @@ Inform user:
 Character Skill created!
 
 Location: characters/{slug}/
-Command: /{slug} (full version)
+Command: /ACGN-character {slug}
 
 If something feels off, just say "she wouldn't do that" and I'll update it.
 ```
