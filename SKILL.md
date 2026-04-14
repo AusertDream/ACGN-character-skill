@@ -159,7 +159,7 @@ pip list 2>/dev/null | grep -iE "paddle|ocr|easyocr|rapidocr|tesseract"
 
 ```bash
 # 从每个视频抽取一帧样本
-ffmpeg -ss 30 -i "{video_path}" -frames:v 1 -q:v 2 "/tmp/{video_stem}_sample.png"
+ffmpeg -ss 30 -i "{video_path}" -frames:v 1 -q:v 2 "./{video_stem}_sample.png"
 ```
 
 用 `Read` 工具查看所有样本截图，判断：
@@ -526,7 +526,7 @@ Before running OCR, extract a sample frame from each video (at 30s or 10% of dur
 
 ```bash
 # Extract one sample frame from each video
-ffmpeg -ss 30 -i "{video_path}" -frames:v 1 -q:v 2 "/tmp/{video_stem}_sample.png"
+ffmpeg -ss 30 -i "{video_path}" -frames:v 1 -q:v 2 "./{video_stem}_sample.png"
 ```
 
 Use the `Read` tool to view all sample screenshots and determine:
