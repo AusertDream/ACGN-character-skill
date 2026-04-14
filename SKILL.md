@@ -123,6 +123,36 @@ ls ${CLAUDE_SKILL_DIR}/characters/
 
 用户提供视频文件路径后，执行以下步骤：
 
+**A0. 环境预检**
+
+在运行任何 OCR 之前，先检查依赖环境：
+
+```bash
+# 1. 检查是否存在虚拟环境
+python -c "import sys; print(sys.prefix, sys.base_prefix); print('venv:', sys.prefix != sys.base_prefix)"
+```
+
+```bash
+# 2. 检查 paddleocr 是否已安装
+python -c "import paddleocr; print('paddleocr:', paddleocr.__version__)" 2>&1
+```
+
+```bash
+# 3. 检查是否有其他疑似 OCR 相关包
+pip list 2>/dev/null | grep -iE "paddle|ocr|easyocr|rapidocr|tesseract"
+```
+
+根据结果判断：
+
+- **paddleocr 已可正常导入** → 直接进入 A1，无需安装
+- **pip list 中有 paddleocr 但导入失败**（如 torch DLL 问题）→ 用 `AskUserQuestion` 告知用户："检测到 paddleocr 已安装但导入时报错（可能是依赖冲突），是否仍尝试继续？还是重新安装？"
+- **pip list 中有其他 OCR 相关包**（如 easyocr、rapidocr）→ 用 `AskUserQuestion` 询问用户："检测到已安装 {包名}，是否已有可用的 OCR 环境？还是需要安装 paddleocr？"
+- **完全没有任何 OCR 包** → 执行安装：
+  ```bash
+  pip install -r ${CLAUDE_SKILL_DIR}/requirements.txt
+  ```
+  安装完成后再次验证 `import paddleocr` 是否成功。
+
 **A1. 布局一致性检测**
 
 在跑 OCR 之前，先从每个视频抽取一帧样本截图（取第 30 秒或视频 10% 位置），自行查看判断所有视频的对话框 UI 布局是否一致：
@@ -459,6 +489,36 @@ Can mix and match, or skip entirely (generate from manual info only).
 #### Option A: Video Dialogue Extraction (OCR)
 
 After user provides video file paths, execute the following steps:
+
+**A0. Environment Pre-check**
+
+Before running any OCR, verify the dependency environment:
+
+```bash
+# 1. Check if a virtual environment is active
+python -c "import sys; print(sys.prefix, sys.base_prefix); print('venv:', sys.prefix != sys.base_prefix)"
+```
+
+```bash
+# 2. Check if paddleocr is installed and importable
+python -c "import paddleocr; print('paddleocr:', paddleocr.__version__)" 2>&1
+```
+
+```bash
+# 3. Check for other OCR-related packages that may already be installed
+pip list 2>/dev/null | grep -iE "paddle|ocr|easyocr|rapidocr|tesseract"
+```
+
+Based on results:
+
+- **paddleocr imports successfully** → Proceed to A1, no installation needed
+- **paddleocr is in pip list but import fails** (e.g., torch DLL issue) → Use `AskUserQuestion` to inform user: "paddleocr is installed but import fails (likely dependency conflict). Continue anyway or reinstall?"
+- **Other OCR packages found** (e.g., easyocr, rapidocr) → Use `AskUserQuestion` to ask: "Found {package_name} installed. Do you already have a working OCR environment, or should I install paddleocr?"
+- **No OCR packages found at all** → Install:
+  ```bash
+  pip install -r ${CLAUDE_SKILL_DIR}/requirements.txt
+  ```
+  After installation, verify `import paddleocr` succeeds.
 
 **A1. Layout Consistency Check**
 
