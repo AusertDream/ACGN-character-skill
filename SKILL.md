@@ -176,6 +176,22 @@ ffmpeg -ss 30 -i "{video_path}" -frames:v 1 -q:v 2 "./{video_stem}_sample.png"
 
 检查 `${CLAUDE_SKILL_DIR}/tools/configs/` 目录下是否有对应作品的配置文件。如果没有，根据截图中对话框和名字框的位置估算归一化坐标（x, y, w, h 均为 0-1 范围），用 `Write` 工具创建配置文件。如果已有配置，用 `Read` 查看截图确认 ROI 是否仍然匹配。
 
+**ROI 精度验证**：创建或加载 ROI 配置后，必须用样本截图实际验证框选精度。用以下命令将 ROI 区域裁切出来：
+
+```bash
+# 用 ffmpeg 按归一化坐标裁切 name 框和 dialogue 框
+# 假设 name_roi=(x, y, w, h)，dialogue_roi=(x, y, w, h)，坐标均为 0-1 归一化值
+ffmpeg -i "./{video_stem}_sample.png" -vf "crop=iw*{name_w}:ih*{name_h}:iw*{name_x}:ih*{name_y}" "./{video_stem}_name_crop.png"
+ffmpeg -i "./{video_stem}_sample.png" -vf "crop=iw*{dialogue_w}:ih*{dialogue_h}:iw*{dialogue_x}:ih*{dialogue_y}" "./{video_stem}_dialogue_crop.png"
+```
+
+用 `Read` 工具查看裁切后的图片，逐项确认：
+
+- **name 框**：裁切区域是否精确包含角色名文字？是否框到了多余内容（如对话文字、UI 装饰）？是否遗漏了部分名字？
+- **dialogue 框**：裁切区域是否精确包含完整对话文字？是否框到了名字框的内容？是否遗漏了对话末尾的文字？
+
+如果框选不准确，调整 ROI 坐标后重新裁切验证，直到两个框都精确命中目标内容为止。
+
 **A3. 运行提取**
 
 单个视频：
@@ -542,6 +558,22 @@ Results:
 **A2. ROI Configuration**
 
 Check if a matching config exists in `${CLAUDE_SKILL_DIR}/tools/configs/`. If not, estimate normalized coordinates (x, y, w, h in 0-1 range) from the screenshots for dialogue box and name box positions, then create the config file using the `Write` tool. If a config already exists, `Read` the screenshots to verify the ROI still matches.
+
+**ROI Accuracy Verification**: After creating or loading the ROI config, you must verify the selection accuracy using sample screenshots. Crop the ROI regions with:
+
+```bash
+# Crop name box and dialogue box using normalized ROI coordinates
+# Assuming name_roi=(x, y, w, h), dialogue_roi=(x, y, w, h), all 0-1 normalized
+ffmpeg -i "./{video_stem}_sample.png" -vf "crop=iw*{name_w}:ih*{name_h}:iw*{name_x}:ih*{name_y}" "./{video_stem}_name_crop.png"
+ffmpeg -i "./{video_stem}_sample.png" -vf "crop=iw*{dialogue_w}:ih*{dialogue_h}:iw*{dialogue_x}:ih*{dialogue_y}" "./{video_stem}_dialogue_crop.png"
+```
+
+Use the `Read` tool to view the cropped images and verify each:
+
+- **Name box**: Does the crop precisely contain the character name text? Does it include extraneous content (dialogue text, UI decorations)? Is any part of the name cut off?
+- **Dialogue box**: Does the crop precisely contain the full dialogue text? Does it bleed into the name box content? Is any trailing dialogue text cut off?
+
+If the selection is inaccurate, adjust the ROI coordinates and re-crop until both boxes precisely target their intended content.
 
 **A3. Run Extraction**
 
