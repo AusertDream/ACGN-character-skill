@@ -71,6 +71,7 @@ ls ${CLAUDE_SKILL_DIR}/characters/
 | 视频对话提取（OCR） | `Bash` → `python3 -m tools.dialogue_extractor` （需在项目根目录运行） |
 | 读取 PDF 文档 | `Read` 工具（原生支持 PDF） |
 | 读取图片截图 | `Read` 工具（原生支持图片） |
+| 读取 EPUB 小说 | `Bash` → `python3 -m tools.epub_reader` 转为文本后用 `Read` 读取 |
 | 读取 MD/TXT 文件 | `Read` 工具 |
 | 写入/更新 Skill 文件 | `Write` / `Edit` 工具 |
 | 版本管理 | `Bash` → `python3 ${CLAUDE_SKILL_DIR}/tools/version_manager.py` |
@@ -120,7 +121,32 @@ ls ${CLAUDE_SKILL_DIR}/characters/
 
 #### 方式 A：视频对话提取（OCR）
 
-用户提供视频文件路径后，先确认是否有对应作品的 ROI 配置文件（`${CLAUDE_SKILL_DIR}/tools/configs/` 目录下）。如果没有，提示用户先用 `roi_calibrator.py` 校准 ROI 区域。
+用户提供视频文件路径后，执行以下步骤：
+
+**A1. 布局一致性检测**
+
+在跑 OCR 之前，先从每个视频抽取一帧样本截图（取第 30 秒或视频 10% 位置），自行查看判断所有视频的对话框 UI 布局是否一致：
+
+```bash
+# 从每个视频抽取一帧样本
+ffmpeg -ss 30 -i "{video_path}" -frames:v 1 -q:v 2 "/tmp/{video_stem}_sample.png"
+```
+
+用 `Read` 工具查看所有样本截图，判断：
+- 对话框的位置和大小是否一致
+- 名字框的位置和大小是否一致
+- 是否有不同 UI 布局（如主线 vs 支线、日常 vs 战斗演出）
+
+判断结果：
+- **布局一致** → 所有视频共用一份 ROI 配置
+- **布局不一致** → 按布局分组，每组创建独立的 ROI 配置文件（`tools/configs/{work_id}_{group}.yaml`），分组运行 pipeline
+- **无法确定** → 用 `AskUserQuestion` 展示截图让用户确认
+
+**A2. ROI 配置**
+
+检查 `${CLAUDE_SKILL_DIR}/tools/configs/` 目录下是否有对应作品的配置文件。如果没有，根据截图中对话框和名字框的位置估算归一化坐标（x, y, w, h 均为 0-1 范围），用 `Write` 工具创建配置文件。如果已有配置，用 `Read` 查看截图确认 ROI 是否仍然匹配。
+
+**A3. 运行提取**
 
 单个视频：
 ```bash
@@ -136,6 +162,8 @@ python3 -m tools.dialogue_extractor "{video_dir}" tools/configs/{work_id}.yaml \
   --output-dir ./characters/{slug}/knowledge --batch --video-pattern "*.mp4"
 ```
 
+如果存在多组布局，对每组分别用对应配置运行。
+
 提取完成后，用 `Read` 读取 `characters/{slug}/knowledge/` 下的 `.jsonl` 输出文件。也可以用 `text_output.py` 转换为纯文本格式方便分析：
 ```bash
 python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
@@ -143,7 +171,7 @@ python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
 
 如果 OCR 提取失败，常见原因：
 - 缺少 PaddleOCR / PaddlePaddle：提示用户安装
-- ROI 配置不匹配：提示用 roi_calibrator.py 重新校准
+- ROI 配置不匹配：重新查看截图调整 ROI 坐标
 - 或改用方式 B/C
 
 ---
@@ -152,6 +180,11 @@ python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
 
 - **PDF / 图片**：`Read` 工具直接读取
 - **Markdown / TXT**：`Read` 工具直接读取
+- **EPUB 小说**：先用 `epub_reader.py` 转为纯文本，再用 `Read` 读取：
+  ```bash
+  cd ${CLAUDE_SKILL_DIR}
+  python3 -m tools.epub_reader "{epub_path}" --output ./characters/{slug}/knowledge/{filename}.txt
+  ```
 
 ---
 
@@ -375,6 +408,7 @@ This Skill runs in the Claude Code environment with the following tools:
 | Video dialogue extraction (OCR) | `Bash` → `python3 -m tools.dialogue_extractor` (run from project root) |
 | Read PDF documents | `Read` tool (native PDF support) |
 | Read image screenshots | `Read` tool (native image support) |
+| Read EPUB novels | `Bash` → `python3 -m tools.epub_reader` to convert, then `Read` the text |
 | Read MD/TXT files | `Read` tool |
 | Write/update Skill files | `Write` / `Edit` tool |
 | Version management | `Bash` → `python3 ${CLAUDE_SKILL_DIR}/tools/version_manager.py` |
@@ -424,7 +458,32 @@ Can mix and match, or skip entirely (generate from manual info only).
 
 #### Option A: Video Dialogue Extraction (OCR)
 
-After user provides a video file path, first check if a matching ROI config exists (`${CLAUDE_SKILL_DIR}/tools/configs/` directory). If not, prompt user to calibrate ROI regions using `roi_calibrator.py`.
+After user provides video file paths, execute the following steps:
+
+**A1. Layout Consistency Check**
+
+Before running OCR, extract a sample frame from each video (at 30s or 10% of duration) and visually inspect them to determine if the dialogue UI layout is consistent across all videos:
+
+```bash
+# Extract one sample frame from each video
+ffmpeg -ss 30 -i "{video_path}" -frames:v 1 -q:v 2 "/tmp/{video_stem}_sample.png"
+```
+
+Use the `Read` tool to view all sample screenshots and determine:
+- Whether the dialogue box position and size are consistent
+- Whether the name box position and size are consistent
+- Whether different UI layouts exist (e.g., main story vs side story, daily life vs battle cutscenes)
+
+Results:
+- **Consistent layout** → All videos share one ROI config
+- **Inconsistent layout** → Group by layout, create separate ROI config files (`tools/configs/{work_id}_{group}.yaml`) for each group, run pipeline per group
+- **Cannot determine** → Use `AskUserQuestion` to show screenshots and ask user to confirm
+
+**A2. ROI Configuration**
+
+Check if a matching config exists in `${CLAUDE_SKILL_DIR}/tools/configs/`. If not, estimate normalized coordinates (x, y, w, h in 0-1 range) from the screenshots for dialogue box and name box positions, then create the config file using the `Write` tool. If a config already exists, `Read` the screenshots to verify the ROI still matches.
+
+**A3. Run Extraction**
 
 Single video:
 ```bash
@@ -440,6 +499,8 @@ python3 -m tools.dialogue_extractor "{video_dir}" tools/configs/{work_id}.yaml \
   --output-dir ./characters/{slug}/knowledge --batch --video-pattern "*.mp4"
 ```
 
+If multiple layout groups exist, run each group separately with its corresponding config.
+
 After extraction, `Read` the `.jsonl` output files in `characters/{slug}/knowledge/`. You can also convert to plain text for analysis:
 ```bash
 python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
@@ -447,7 +508,7 @@ python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
 
 If OCR extraction fails, common reasons:
 - Missing PaddleOCR / PaddlePaddle: prompt user to install
-- ROI config mismatch: prompt user to recalibrate with roi_calibrator.py
+- ROI config mismatch: re-examine screenshots and adjust ROI coordinates
 - Or switch to Option B/C
 
 ---
@@ -456,6 +517,11 @@ If OCR extraction fails, common reasons:
 
 - **PDF / Images**: `Read` tool directly
 - **Markdown / TXT**: `Read` tool directly
+- **EPUB novels**: Convert to plain text first with `epub_reader.py`, then `Read`:
+  ```bash
+  cd ${CLAUDE_SKILL_DIR}
+  python3 -m tools.epub_reader "{epub_path}" --output ./characters/{slug}/knowledge/{filename}.txt
+  ```
 
 ---
 
