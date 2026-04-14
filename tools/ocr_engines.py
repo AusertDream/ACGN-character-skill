@@ -38,7 +38,7 @@ def _create_paddleocr():
     except ImportError:
         raise ImportError("PaddleOCR not installed. Run: pip install paddleocr")
 
-    ocr = PaddleOCR(use_textline_orientation=True, lang="ch", show_log=False)
+    ocr = PaddleOCR(use_textline_orientation=True, lang="ch")
 
     def ocr_func(image: Image.Image) -> tuple[str, float]:
         import numpy as np
