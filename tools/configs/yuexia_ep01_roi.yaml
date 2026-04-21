@@ -1,42 +1,32 @@
-description: ROI configuration for dialogue extraction
-dialogue_box:
-  position: bottom-center
-  preprocessing:
-    notes: Semi-transparent background with outlined text
-    profile: semi_transparent_hsv
-  roi:
-    height: 170
-    notes: Approximate coordinates, needs calibration
-    width: 1540
-    x: 90
-    y: 785
+work_id: yuexia
+name: "月下 - 崩坏三舰长线 - 第一节"
+
+dialog_box:
+  x: 0.140
+  y: 0.815
+  w: 0.700
+  h: 0.125
+
 name_box:
-  position: bottom-left
-  preprocessing:
-    notes: Same style as dialogue box
-    profile: semi_transparent_hsv
-  roi:
-    height: 78
-    notes: Above dialogue box, left-aligned
-    width: 210
-    x: 95
-    y: 708
-resolution:
-  height: 1080
-  notes: Base resolution for ROI coordinates
-  width: 1920
-special_regions:
-  battle_caption:
-    enabled: false
-    notes: Optional region for battle scene captions
-    roi:
-      height: 120
-      width: 1480
-      x: 120
-      y: 820
-validation:
-  calibrated: false
-  calibration_date: null
-  calibration_frames: []
-  notes: Set calibrated=True after manual validation
-work_id: yuexia_ep01
+  x: 0.140
+  y: 0.730
+  w: 0.110
+  h: 0.075
+
+dialog_preprocess: semi_transparent
+name_preprocess: default
+
+ocr_engine: paddleocr
+target_fps: 2.0
+review_threshold: 0.7
+
+speaker_aliases:
+  舰长: []
+  姬子: [姬子老师]
+  琪亚娜: [琪亚]
+  芽衣: []
+  布洛妮娅: [布洛妮]
+  德丽莎: []
+  符华: []
+  旁白: []
+  系统: []

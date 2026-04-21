@@ -552,6 +552,34 @@ class DialogueExtractor:
         return summary
 
 
+def _process_single_video(video_path, config_path, video_output, ocr_engine, target_fps, review_threshold, save_crops, resume):
+    """Worker function for multiprocessing pool."""
+    try:
+        print(f"\n[worker] Processing {video_path.name}")
+        extractor = DialogueExtractor(
+            video_path=video_path,
+            config_path=config_path,
+            output_dir=video_output,
+            ocr_engine=ocr_engine,
+            target_fps=target_fps,
+            review_threshold=review_threshold,
+            save_crops=save_crops,
+            resume=resume,
+        )
+        summary = extractor.run()
+        summary["video"] = str(video_path)
+        summary["status"] = "ok"
+        print(f"[worker] Completed {video_path.name}: {summary['total_events']} events")
+        return summary
+    except Exception as e:
+        print(f"[worker] FAILED {video_path.name}: {e}")
+        return {
+            "video": str(video_path),
+            "status": "error",
+            "error": str(e),
+        }
+
+
 class BatchRunner:
     """Run dialogue extraction on multiple videos."""
 
@@ -581,8 +609,55 @@ class BatchRunner:
             raise FileNotFoundError(f"Video directory not found: {self.video_dir}")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def run(self) -> List[Dict[str, Any]]:
-        """Process all videos, return list of per-video summaries."""
+    def _find_video_config(self, video_path: Path) -> Optional[Path]:
+        """
+        Auto-detect per-video ROI config based on video filename.
+
+        Looks for episode-specific configs like:
+        - yuexia_ep01_roi.yaml for ep01 videos
+        - yuexia_ep17_roi.yaml for ep17 videos
+        - yuexia_ep18p1_roi.yaml for ep18 part 1 videos
+
+        Returns the per-video config path if found, None otherwise.
+        """
+        video_name = video_path.stem.lower()
+        config_dir = self.config_path.parent
+        base_name = self.config_path.stem  # e.g., "yuexia"
+
+        # Extract episode identifier from video filename
+        # Pattern: 第{N}节 or 第{N}节第{M}部分
+        import re
+
+        # Match: 第十七节 -> ep17, 第十八节第一部分 -> ep18p1, etc.
+        episode_patterns = [
+            (r'第十九节', 'ep19'),
+            (r'第十八节主要支线', 'ep18side'),
+            (r'第十八节第三部分', 'ep18p3'),
+            (r'第十八节第二部分', 'ep18p2'),
+            (r'第十八节第一部分', 'ep18p1'),
+            (r'第十七节', 'ep17'),
+            (r'第一节', 'ep01'),
+        ]
+
+        episode_id = None
+        for pattern, ep_id in episode_patterns:
+            if pattern in video_name:
+                episode_id = ep_id
+                break
+
+        if not episode_id:
+            return None
+
+        # Look for {base_name}_{episode_id}_roi.yaml
+        per_video_config = config_dir / f"{base_name}_{episode_id}_roi.yaml"
+        if per_video_config.exists():
+            print(f"[config] Using per-video config for {episode_id}: {per_video_config.name}")
+            return per_video_config
+
+        return None
+
+    def run(self, num_workers: int = 4) -> List[Dict[str, Any]]:
+        """Process all videos in parallel, return list of per-video summaries."""
         videos = sorted(self.video_dir.glob(self.video_pattern))
         if not videos:
             print(f"[batch] No videos matching '{self.video_pattern}' in {self.video_dir}")
@@ -590,36 +665,32 @@ class BatchRunner:
 
         total = len(videos)
         print(f"[batch] Found {total} video(s) in {self.video_dir}")
-        summaries: List[Dict[str, Any]] = []
-        failed = 0
+        print(f"[batch] Using {num_workers} parallel workers")
 
-        for idx, video_path in enumerate(videos, 1):
-            print(f"\nProcessing video {idx}/{total}: {video_path.name}")
+        from multiprocessing import Pool, cpu_count
+        actual_workers = min(num_workers, total, cpu_count())
+
+        tasks = []
+        for video_path in videos:
             video_output = self.output_dir / video_path.stem
-            try:
-                extractor = DialogueExtractor(
-                    video_path=video_path,
-                    config_path=self.config_path,
-                    output_dir=video_output,
-                    ocr_engine=self.ocr_engine,
-                    target_fps=self.target_fps,
-                    review_threshold=self.review_threshold,
-                    save_crops=self.save_crops,
-                    resume=self.resume,
-                )
-                summary = extractor.run()
-                summary["video"] = str(video_path)
-                summary["status"] = "ok"
-                summaries.append(summary)
-            except Exception as e:
-                print(f"[batch] FAILED {video_path.name}: {e}")
-                failed += 1
-                summaries.append({
-                    "video": str(video_path),
-                    "status": "error",
-                    "error": str(e),
-                })
+            # Auto-detect per-video ROI config
+            per_video_config = self._find_video_config(video_path)
+            config_to_use = per_video_config if per_video_config else self.config_path
+            tasks.append((
+                video_path,
+                config_to_use,
+                video_output,
+                self.ocr_engine,
+                self.target_fps,
+                self.review_threshold,
+                self.save_crops,
+                self.resume,
+            ))
 
+        with Pool(processes=actual_workers) as pool:
+            summaries = pool.starmap(_process_single_video, tasks)
+
+        failed = sum(1 for s in summaries if s["status"] == "error")
         batch_summary = {
             "total_videos": total,
             "succeeded": total - failed,
@@ -645,6 +716,7 @@ if __name__ == "__main__":
     parser.add_argument("--review-threshold", type=float, default=None, help="Confidence threshold (overrides config)")
     parser.add_argument("--batch", action="store_true", help="Treat video_path as directory")
     parser.add_argument("--video-pattern", type=str, default="*.mp4", help="Glob pattern for batch mode")
+    parser.add_argument("--workers", type=int, default=4, help="Number of parallel workers for batch mode (default: 4)")
 
     args = parser.parse_args()
     output_dir = args.output_dir or args.video_path.parent / "output"
@@ -658,7 +730,7 @@ if __name__ == "__main__":
                 review_threshold=args.review_threshold,
                 save_crops=args.save_crops, resume=not args.no_resume,
             )
-            runner.run()
+            runner.run(num_workers=args.workers)
         else:
             extractor = DialogueExtractor(
                 video_path=args.video_path, config_path=args.config,
