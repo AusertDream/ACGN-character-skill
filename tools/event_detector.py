@@ -71,7 +71,8 @@ class EventDetector:
         empty_frames_threshold: int = 2,
         min_text_length: int = 2,
         similarity_threshold: float = 0.6,
-        post_growth_stable_threshold: int = 5
+        post_growth_stable_threshold: int = 5,
+        work_config: Any = None,
     ):
         """
         Initialize event detector.
@@ -85,13 +86,44 @@ class EventDetector:
             post_growth_stable_threshold: Stable frames needed after text was growing
                 (typewriter effect). Higher than stable_frames_threshold to avoid
                 premature finalization during typewriter pauses. Default 5 (2.5s at 2fps).
+            work_config: Optional WorkConfig object. If provided, threshold fields
+                from config override the corresponding parameters above.
         """
         self.ocr_func = ocr_func
-        self.stable_frames_threshold = stable_frames_threshold
-        self.empty_frames_threshold = empty_frames_threshold
-        self.min_text_length = min_text_length
-        self.similarity_threshold = similarity_threshold
-        self.post_growth_stable_threshold = post_growth_stable_threshold
+
+        # Apply config overrides if provided (config takes precedence)
+        if work_config is not None:
+            self.stable_frames_threshold = (
+                work_config.stable_frames_threshold
+                if work_config.stable_frames_threshold is not None
+                else stable_frames_threshold
+            )
+            self.empty_frames_threshold = (
+                work_config.empty_frames_threshold
+                if work_config.empty_frames_threshold is not None
+                else empty_frames_threshold
+            )
+            self.min_text_length = (
+                work_config.min_text_length
+                if work_config.min_text_length is not None
+                else min_text_length
+            )
+            self.similarity_threshold = (
+                work_config.similarity_threshold
+                if work_config.similarity_threshold is not None
+                else similarity_threshold
+            )
+            self.post_growth_stable_threshold = (
+                work_config.post_growth_stable_threshold
+                if work_config.post_growth_stable_threshold is not None
+                else post_growth_stable_threshold
+            )
+        else:
+            self.stable_frames_threshold = stable_frames_threshold
+            self.empty_frames_threshold = empty_frames_threshold
+            self.min_text_length = min_text_length
+            self.similarity_threshold = similarity_threshold
+            self.post_growth_stable_threshold = post_growth_stable_threshold
 
         self.current_event: Optional[DialogueEvent] = None
         self.event_counter = 0

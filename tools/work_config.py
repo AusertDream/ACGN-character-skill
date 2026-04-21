@@ -35,6 +35,17 @@ class WorkConfig:
     # Processing
     target_fps: float = 2.0
     review_threshold: float = 0.7
+    # VLM fallback
+    vlm_enabled: bool = False
+    vlm_threshold: float = 0.5
+    vlm_max_calls_per_video: Optional[int] = 20
+    vlm_model: str = "claude-sonnet-4-20250514"
+    # Event detector threshold overrides
+    stable_frames_threshold: Optional[int] = None
+    post_growth_stable_threshold: Optional[int] = None
+    similarity_threshold: Optional[float] = None
+    min_text_length: Optional[int] = None
+    empty_frames_threshold: Optional[int] = None
 
 
 def validate_roi(roi: dict, label: str) -> None:
@@ -71,6 +82,30 @@ def load_work_config(config_path: Path) -> WorkConfig:
 
     validate_roi(data["dialog_box"], "dialog_box")
     validate_roi(data["name_box"], "name_box")
+
+    # VLM threshold validation
+    vlm_thr = data.get("vlm_threshold", 0.5)
+    if not (0.0 <= vlm_thr <= 1.0):
+        raise ValueError(f"vlm_threshold={vlm_thr} must be in [0, 1]")
+
+    vlm_max = data.get("vlm_max_calls_per_video", 20)
+    if vlm_max is not None and vlm_max < 1:
+        raise ValueError(f"vlm_max_calls_per_video={vlm_max} must be positive or null")
+
+    # Event detector threshold validation
+    for name, default in (
+        ("stable_frames_threshold", None),
+        ("post_growth_stable_threshold", None),
+        ("min_text_length", None),
+        ("empty_frames_threshold", None),
+    ):
+        val = data.get(name, default)
+        if val is not None and val < 1:
+            raise ValueError(f"{name}={val} must be positive")
+
+    sim_thr = data.get("similarity_threshold", None)
+    if sim_thr is not None and not (0.0 <= sim_thr <= 1.0):
+        raise ValueError(f"similarity_threshold={sim_thr} must be in [0, 1]")
 
     # Ensure speaker_aliases values are lists
     aliases = data.get("speaker_aliases", {})

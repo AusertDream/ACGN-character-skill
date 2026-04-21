@@ -20,6 +20,19 @@ ocr_engine: paddleocr
 target_fps: 2.0
 review_threshold: 0.7
 
+# VLM fallback (optional, disabled by default)
+# vlm_enabled: true
+# vlm_threshold: 0.5
+# vlm_max_calls_per_video: 20
+# vlm_model: claude-sonnet-4-20250514
+
+# Event detector threshold overrides (optional, uses defaults if not set)
+# stable_frames_threshold: 3
+# post_growth_stable_threshold: 5
+# similarity_threshold: 0.6
+# min_text_length: 2
+# empty_frames_threshold: 2
+
 speaker_aliases:
   舰长: []
   姬子: [姬子老师]

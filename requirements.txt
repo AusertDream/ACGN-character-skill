@@ -8,8 +8,12 @@ av>=12.0                    # PyAV - video frame extraction
 PyYAML>=6.0
 
 # Primary OCR engine
-paddlepaddle>=2.6           # PaddlePaddle deep learning framework
-paddleocr>=2.8              # PaddleOCR text recognition
+# PaddlePaddle: install GPU version for CUDA acceleration
+# GPU (CUDA 13.0): pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
+# GPU (CUDA 12.6): pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+# CPU only:        pip install paddlepaddle>=2.6
+paddlepaddle-gpu>=3.3.0
+paddleocr>=3.4              # PaddleOCR text recognition
 
 # Optional: fallback OCR engines (uncomment if needed)
 # easyocr>=1.7
@@ -17,3 +21,6 @@ paddleocr>=2.8              # PaddleOCR text recognition
 
 # GUI-based ROI calibration
 opencv-python>=4.8
+
+# VLM OCR fallback (optional, for low-confidence event recovery)
+anthropic>=0.40.0

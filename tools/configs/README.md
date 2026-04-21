@@ -41,6 +41,20 @@ fallback_threshold: 0.7               # Confidence below which fallback triggers
 target_fps: 2.0                       # Frame sampling rate
 review_threshold: 0.7                 # Confidence below which events are flagged
 
+# VLM fallback (optional, disabled by default)
+vlm_enabled: false                    # Enable VLM OCR fallback for low-confidence events
+vlm_threshold: 0.5                    # Confidence below which VLM is triggered
+vlm_max_calls_per_video: 20           # Max VLM calls per video (null = unlimited)
+vlm_model: claude-sonnet-4-20250514             # Claude model for VLM OCR
+
+# Event detector threshold overrides (optional, uses built-in defaults if not set)
+# These allow per-video tuning of the event detection state machine
+stable_frames_threshold: null         # Frames needed to consider text stable (default: 3)
+post_growth_stable_threshold: null    # Stable frames needed after typewriter growth (default: 5)
+similarity_threshold: null            # Minimum similarity for fuzzy prefix matching (default: 0.6)
+min_text_length: null                 # Minimum text length to detect (default: 2)
+empty_frames_threshold: null          # Empty frames to finalize event (default: 2)
+
 # Speaker configuration (optional)
 speaker_aliases:
   舰长: []
@@ -138,3 +152,27 @@ summary = extractor.run()
 ```
 
 All settings from the config (OCR engine, preprocessing, speaker aliases, thresholds) are applied automatically.
+
+## Per-Video Configuration
+
+For works where different episodes have slightly different UI layouts (e.g., name box position varies), you can create per-video override configs. The `BatchRunner` auto-detects these based on video filename patterns.
+
+Naming convention: `{base_name}_{episode_id}_roi.yaml` (e.g., `yuexia_ep17_roi.yaml`)
+
+Per-video configs are complete configs (not partial overrides). They can also include event detector threshold overrides for per-episode tuning.
+
+## VLM Fallback
+
+When `vlm_enabled: true`, events with OCR confidence below `vlm_threshold` are automatically sent to Claude's vision API for re-recognition. This handles edge cases like stylized fonts, semi-transparent backgrounds, and complex visual effects that traditional OCR struggles with.
+
+Requirements: Set the `ANTHROPIC_API_KEY` environment variable, or the VLM fallback will be silently disabled.
+
+## Batch Processing
+
+Use `--batch` mode to process multiple videos in parallel:
+
+```bash
+python tools/dialogue_extractor.py ./videos/ configs/yuexia.yaml --batch --workers 4
+```
+
+Batch processing supports checkpoint-based resume. If processing is interrupted, re-running the same command will skip already-completed videos. Use `--force-reprocess` to override this behavior.

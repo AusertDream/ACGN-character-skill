@@ -36,12 +36,14 @@ class DialogueExtractor:
         review_threshold: Optional[float] = None,
         save_crops: bool = False,
         resume: bool = True,
+        vlm_unlimited: bool = False,
     ):
         self.video_path = Path(video_path)
         self.config_path = Path(config_path)
         self.output_dir = Path(output_dir)
         self.save_crops = save_crops
         self.resume = resume
+        self.vlm_unlimited = vlm_unlimited
 
         if not self.video_path.exists():
             raise FileNotFoundError(f"Video not found: {self.video_path}")
@@ -85,6 +87,22 @@ class DialogueExtractor:
         self.crops_dir = self.output_dir / "crops"
         if self.save_crops:
             self.crops_dir.mkdir(parents=True, exist_ok=True)
+
+        # VLM fallback initialization
+        self._vlm_func = None
+        self._vlm_threshold = 0.5
+        self._vlm_max_calls = 20
+        self._vlm_call_count = 0
+        if self.work_config and self.work_config.vlm_enabled:
+            try:
+                from tools.vlm_ocr import create_vlm_ocr_func
+                self._vlm_func = create_vlm_ocr_func(model=self.work_config.vlm_model)
+                self._vlm_threshold = self.work_config.vlm_threshold
+                self._vlm_max_calls = None if self.vlm_unlimited else self.work_config.vlm_max_calls_per_video
+                print(f"[init] VLM fallback enabled (threshold={self._vlm_threshold}, "
+                      f"max_calls={self._vlm_max_calls or 'unlimited'}, model={self.work_config.vlm_model})")
+            except (ImportError, ValueError) as e:
+                print(f"[init] VLM fallback disabled: {e}")
 
     # ------------------------------------------------------------------
     # Speaker parsing (uses per-work special_speakers)
@@ -173,7 +191,29 @@ class DialogueExtractor:
         """
         from tools.output_formatter import event_to_output
 
-        ocr_candidates = dialog_candidates or None
+        ocr_candidates = list(dialog_candidates) if dialog_candidates else []
+
+        # VLM fallback: if dialog OCR confidence is low and VLM is enabled, try VLM OCR
+        if (self._vlm_func is not None
+                and event.confidence < self._vlm_threshold
+                and (self._vlm_max_calls is None or self._vlm_call_count < self._vlm_max_calls)):
+            self._vlm_call_count += 1
+            print(f"  [vlm] Low confidence ({event.confidence:.2f}), calling VLM OCR (call {self._vlm_call_count})")
+            vlm_text, vlm_conf = self._vlm_func(dialog_crop, frame=frame)
+            if vlm_text:
+                ocr_candidates.append({
+                    "engine": "claude-vlm",
+                    "text": vlm_text,
+                    "confidence": vlm_conf,
+                })
+                # If VLM result is better, update event text and confidence
+                if vlm_conf > event.confidence:
+                    event.text = vlm_text
+                    event.confidence = vlm_conf
+                    selection_reason = f"vlm:claude-vlm(conf {vlm_conf:.2f}>{event.confidence:.2f})"
+                    print(f"  [vlm] VLM result accepted: {vlm_text[:30]}...")
+
+        ocr_candidates = ocr_candidates or None
 
         # Compute output FIRST so review_required includes text quality heuristics
         output = event_to_output(
@@ -403,7 +443,7 @@ class DialogueExtractor:
                 print(f"[resume] Resuming from {start_time:.1f}s, {event_count} existing events")
 
         # Components
-        event_detector = EventDetector(fusion.recognize)
+        event_detector = EventDetector(fusion.recognize, work_config=self.work_config)
         event_detector.event_counter = event_count
         event_detector._last_finalized_text = last_finalized_text
 
@@ -594,6 +634,7 @@ class BatchRunner:
         review_threshold: Optional[float] = None,
         save_crops: bool = False,
         resume: bool = True,
+        force_reprocess: bool = False,
     ):
         self.video_dir = Path(video_dir)
         self.config_path = Path(config_path)
@@ -604,10 +645,45 @@ class BatchRunner:
         self.review_threshold = review_threshold
         self.save_crops = save_crops
         self.resume = resume
+        self.force_reprocess = force_reprocess
 
         if not self.video_dir.is_dir():
             raise FileNotFoundError(f"Video directory not found: {self.video_dir}")
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.batch_checkpoint_path = self.output_dir / "batch_checkpoint.jsonl"
+
+    def _load_batch_checkpoint(self) -> set:
+        """Load set of completed video paths from batch checkpoint."""
+        if self.force_reprocess or not self.batch_checkpoint_path.exists():
+            return set()
+        completed = set()
+        try:
+            with open(self.batch_checkpoint_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if entry.get("status") == "ok":
+                            completed.add(entry.get("video"))
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            return set()
+        return completed
+
+    def _save_batch_progress(self, summary: Dict[str, Any]):
+        """Append a single video result to the batch checkpoint."""
+        import datetime
+        entry = {
+            "video": summary.get("video", ""),
+            "status": summary.get("status", "error"),
+            "total_events": summary.get("total_events", 0),
+            "timestamp": datetime.datetime.now().isoformat(),
+        }
+        with open(self.batch_checkpoint_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def _find_video_config(self, video_path: Path) -> Optional[Path]:
         """
@@ -665,11 +741,25 @@ class BatchRunner:
 
         total = len(videos)
         print(f"[batch] Found {total} video(s) in {self.video_dir}")
-        print(f"[batch] Using {num_workers} parallel workers")
+
+        # Check batch checkpoint for already-completed videos
+        completed_videos = self._load_batch_checkpoint()
+        if completed_videos:
+            skipped = [v for v in videos if str(v) in completed_videos]
+            videos = [v for v in videos if str(v) not in completed_videos]
+            if skipped:
+                print(f"[batch] Skipping {len(skipped)} already-completed video(s)")
+            if not videos:
+                print(f"[batch] All videos already processed. Use --force-reprocess to redo.")
+                return []
+
+        remaining = len(videos)
+        print(f"[batch] Processing {remaining} video(s) with {num_workers} parallel workers")
 
         from multiprocessing import Pool, cpu_count
-        actual_workers = min(num_workers, total, cpu_count())
+        actual_workers = min(num_workers, remaining, cpu_count())
 
+        summaries = []
         tasks = []
         for video_path in videos:
             video_output = self.output_dir / video_path.stem
@@ -688,19 +778,22 @@ class BatchRunner:
             ))
 
         with Pool(processes=actual_workers) as pool:
-            summaries = pool.starmap(_process_single_video, tasks)
+            for summary in pool.imap_unordered(lambda args: _process_single_video(*args), tasks):
+                self._save_batch_progress(summary)
+                summaries.append(summary)
 
         failed = sum(1 for s in summaries if s["status"] == "error")
         batch_summary = {
             "total_videos": total,
-            "succeeded": total - failed,
+            "succeeded": remaining - failed,
             "failed": failed,
+            "skipped": total - remaining,
             "videos": summaries,
         }
         summary_path = self.output_dir / "batch_summary.json"
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(batch_summary, f, ensure_ascii=False, indent=2)
-        print(f"\n[batch] Done. {total - failed}/{total} succeeded. Summary: {summary_path}")
+        print(f"\n[batch] Done. {remaining - failed}/{remaining} succeeded ({total - remaining} skipped). Summary: {summary_path}")
         return summaries
 
 
@@ -717,6 +810,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch", action="store_true", help="Treat video_path as directory")
     parser.add_argument("--video-pattern", type=str, default="*.mp4", help="Glob pattern for batch mode")
     parser.add_argument("--workers", type=int, default=4, help="Number of parallel workers for batch mode (default: 4)")
+    parser.add_argument("--force-reprocess", action="store_true", help="Ignore batch checkpoint and reprocess all videos")
+    parser.add_argument("--vlm-unlimited", action="store_true", help="Remove per-video VLM call limit")
 
     args = parser.parse_args()
     output_dir = args.output_dir or args.video_path.parent / "output"
@@ -729,6 +824,7 @@ if __name__ == "__main__":
                 target_fps=args.fps, video_pattern=args.video_pattern,
                 review_threshold=args.review_threshold,
                 save_crops=args.save_crops, resume=not args.no_resume,
+                force_reprocess=args.force_reprocess,
             )
             runner.run(num_workers=args.workers)
         else:
@@ -737,6 +833,7 @@ if __name__ == "__main__":
                 output_dir=output_dir, ocr_engine=args.ocr_engine,
                 target_fps=args.fps, review_threshold=args.review_threshold,
                 save_crops=args.save_crops, resume=not args.no_resume,
+                vlm_unlimited=args.vlm_unlimited,
             )
             summary = extractor.run()
             print(f"\nSummary:")

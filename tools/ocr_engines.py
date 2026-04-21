@@ -43,19 +43,29 @@ def _create_paddleocr():
     except ImportError:
         raise ImportError("PaddleOCR not installed. Run: pip install paddleocr")
 
-    ocr = PaddleOCR(use_textline_orientation=True, lang="ch")
+    import paddle
+    use_gpu = paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0
+    device = "gpu:0" if use_gpu else "cpu"
+    print(f"PaddleOCR using device: {device}")
+    ocr = PaddleOCR(
+        use_textline_orientation=True,
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        lang="ch",
+        device=device,
+    )
 
     def ocr_func(image: Image.Image) -> tuple[str, float]:
         import numpy as np
         img_array = np.array(image)
-        result = ocr.ocr(img_array, cls=True)
-        if result and result[0]:
-            texts = []
-            confidences = []
-            for line in result[0]:
-                texts.append(line[1][0])
-                confidences.append(line[1][1])
-            return (" ".join(texts), sum(confidences) / len(confidences))
+        result = ocr.predict(img_array)
+        for res in result:
+            rec_texts = res.get("rec_texts", []) if isinstance(res, dict) else getattr(res, "rec_texts", [])
+            rec_scores = res.get("rec_scores", []) if isinstance(res, dict) else getattr(res, "rec_scores", [])
+            if rec_texts:
+                text = " ".join(rec_texts)
+                conf = sum(rec_scores) / len(rec_scores)
+                return (text, conf)
         return ("", 0.0)
 
     return ocr_func
