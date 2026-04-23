@@ -8,6 +8,18 @@
 
 项目目前处于半成品状态，OCR 对话提取管线已基本成型并在持续优化中，角色 Skill 生成部分已有初步框架但效果还在调试。当前工作的重心在 OCR 管线的状态机调优上，目标是消除打字机效果导致的对话截断问题。
 
+## Skill 使用流程
+
+本 Skill 通过 `/ACGN-character` 命令触发，入口定义在 `SKILL.md` 中。调用时有两种模式：如果传入的参数是一个已存在于 `characters/` 目录下的角色名（如 `/ACGN-character yuexia`），则读取该角色的 `characters/{slug}/SKILL.md` 并进入角色扮演对话模式；如果参数不匹配任何已有角色或者用户没有传参数，则进入创建器模式，开始生成新角色。
+
+创建器模式分为五个步骤。Step 1 是基础信息录入，只问三个问题：角色名/代号（必填）、基本信息（作品名、身份、种族、外貌等一句话描述）、性格画像（性格标签、角色类型、印象等一句话描述）。除角色名外均可跳过。Step 2 是原材料导入，支持三种方式混用：方式 A 是视频对话提取，使用 OCR 管线从游戏/VN 视频中自动提取对话，这是本项目的核心能力；方式 B 是上传文本文件（PDF、图片、TXT、MD、EPUB 等），通过 Read 工具或 epub_reader 转换后读取；方式 C 是直接粘贴文本。
+
+方式 A 的视频对话提取流程又分为四个子步骤：A0 环境预检（检查 paddleocr 是否可用，缺失则安装）；A1 布局一致性检测（从每个视频抽取样本帧，判断所有视频的对话框 UI 布局是否一致，不一致则分组处理）；A2 ROI 配置（检查或创建 `tools/configs/*.yaml` 配置文件，并通过裁切样本帧验证 ROI 精度，确保名字框和对话框的坐标准确无误）；A3 运行提取（调用 `python3 -m tools.dialogue_extractor` 执行 OCR 提取，支持单视频和批量处理）。
+
+Step 3 是分析原材料，沿两条线并行进行：线路 A 参考 `prompts/story_analyzer.md` 提取角色设定（世界观、经历、关系、能力、关键事件）；线路 B 参考 `prompts/persona_analyzer.md` 提取人格特征（表达风格、情感模式、人际行为、口癖）。Step 4 是生成并预览，参考 `prompts/story_builder.md` 和 `prompts/persona_builder.md` 分别生成 story.md 和 persona.md（五层结构），向用户展示摘要并确认。Step 5 是写入文件，在 `characters/{slug}/` 目录下创建 story.md、persona.md、meta.json 和最终的 SKILL.md，SKILL.md 将 story 和 persona 合并为一个完整的角色扮演指令。
+
+除创建模式外，Skill 还支持两种进化模式。追加文件模式在用户提供新材料时触发，读取新内容后与现有设定合并，先备份当前版本再更新。对话纠正模式在用户说"不对"/"她不会这样"时触发，识别纠正内容属于 Story 还是 Persona，追加 correction 记录并重新生成 SKILL.md。管理命令包括 `/list-characters` 列出所有角色、`/character-rollback` 回滚版本、`/delete-character` 删除角色。
+
 ## 项目结构
 
 项目根目录下的核心文件包括：`SKILL.md` 是角色 Skill 创建器的入口定义，它描述了整个角色创建流程的触发条件、工具使用规则和五步主流程；`README.md` 包含项目说明、安装方式和效果示例；`requirements.txt` 定义了 Python 依赖；`analyze_truncation.py` 是用于分析截断率的脚本；`batch_extract_frames.sh` 和 `batch_ocr_all.sh` 是批量处理的 shell 脚本。
