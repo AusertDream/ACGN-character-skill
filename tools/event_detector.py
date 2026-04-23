@@ -67,11 +67,11 @@ class EventDetector:
     def __init__(
         self,
         ocr_func: Callable[[Image.Image], tuple[str, float]],
-        stable_frames_threshold: int = 3,
+        stable_frames_threshold: int = 5,
         empty_frames_threshold: int = 2,
         min_text_length: int = 2,
-        similarity_threshold: float = 0.6,
-        post_growth_stable_threshold: int = 8,
+        similarity_threshold: float = 0.5,
+        post_growth_stable_threshold: int = 10,
         work_config: Any = None,
     ):
         """
@@ -79,13 +79,13 @@ class EventDetector:
 
         Args:
             ocr_func: Function that takes image and returns (text, confidence)
-            stable_frames_threshold: Frames needed to consider text stable
+            stable_frames_threshold: Frames needed to consider text stable (default 5)
             empty_frames_threshold: Empty frames needed to finalize event
             min_text_length: Minimum text length to consider valid
-            similarity_threshold: Minimum similarity ratio for fuzzy prefix matching
+            similarity_threshold: Minimum similarity ratio for fuzzy prefix matching (default 0.5)
             post_growth_stable_threshold: Stable frames needed after text was growing
                 (typewriter effect). Higher than stable_frames_threshold to avoid
-                premature finalization during typewriter pauses. Default 8 (4s at 2fps).
+                premature finalization during typewriter pauses. Default 10 (5s at 2fps).
             work_config: Optional WorkConfig object. If provided, threshold fields
                 from config override the corresponding parameters above.
         """
