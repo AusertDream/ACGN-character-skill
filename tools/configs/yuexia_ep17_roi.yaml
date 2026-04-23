@@ -13,8 +13,8 @@ name_box:
   w: 0.110
   h: 0.075
 
-dialog_preprocess: semi_transparent
-name_preprocess: default
+dialog_preprocess: game_dialogue
+name_preprocess: game_namebox
 
 ocr_engine: paddleocr
 target_fps: 2.0

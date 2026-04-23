@@ -21,6 +21,9 @@ class PreprocessProfile:
     binarize_threshold: int = 128
     contrast_enhance: float = 1.0
     invert: bool = False
+    use_clahe: bool = False
+    clahe_clip_limit: float = 2.5
+    clahe_tile_size: int = 8
 
 
 BUILTIN_PROFILES = {
@@ -52,6 +55,21 @@ BUILTIN_PROFILES = {
         invert=True,
         binarize=True,
     ),
+    "game_dialogue": PreprocessProfile(
+        name="game_dialogue",
+        upscale_factor=2.0,
+        use_clahe=True,
+        clahe_clip_limit=2.5,
+        clahe_tile_size=8,
+        denoise=True,
+    ),
+    "game_namebox": PreprocessProfile(
+        name="game_namebox",
+        upscale_factor=2.0,
+        use_clahe=True,
+        clahe_clip_limit=3.0,
+        clahe_tile_size=8,
+    ),
 }
 
 
@@ -59,7 +77,7 @@ def apply_profile(image: Image.Image, profile: PreprocessProfile) -> Image.Image
     """
     Apply preprocessing steps to an image in fixed order.
 
-    Pipeline order: upscale -> contrast -> sharpen -> denoise -> binarize -> invert.
+    Pipeline order: upscale -> CLAHE -> contrast -> sharpen -> denoise -> binarize -> invert.
     Each step is skipped when the profile leaves it at the neutral default.
 
     Args:
@@ -77,6 +95,25 @@ def apply_profile(image: Image.Image, profile: PreprocessProfile) -> Image.Image
         new_h = int(img.height * profile.upscale_factor)
         img = img.resize((new_w, new_h), Image.LANCZOS)
 
+    # CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    if profile.use_clahe:
+        import numpy as np
+        import cv2
+
+        img_rgb = img.convert("RGB")
+        img_bgr = cv2.cvtColor(np.array(img_rgb), cv2.COLOR_RGB2BGR)
+        lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+        clahe = cv2.createCLAHE(
+            clipLimit=profile.clahe_clip_limit,
+            tileGridSize=(profile.clahe_tile_size, profile.clahe_tile_size),
+        )
+        l_channel = clahe.apply(l_channel)
+        lab = cv2.merge((l_channel, a_channel, b_channel))
+        img_bgr = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(img_rgb)
+
     # Contrast
     if profile.contrast_enhance != 1.0:
         img = ImageEnhance.Contrast(img).enhance(profile.contrast_enhance)
@@ -85,9 +122,19 @@ def apply_profile(image: Image.Image, profile: PreprocessProfile) -> Image.Image
     if profile.sharpen:
         img = img.filter(ImageFilter.SHARPEN)
 
-    # Denoise (median filter)
+    # Denoise
     if profile.denoise:
-        img = img.filter(ImageFilter.MedianFilter(size=3))
+        if profile.use_clahe:
+            import numpy as np
+            import cv2
+
+            img_rgb = img.convert("RGB")
+            img_bgr = cv2.cvtColor(np.array(img_rgb), cv2.COLOR_RGB2BGR)
+            img_bgr = cv2.fastNlMeansDenoisingColored(img_bgr, None, 3, 3, 7, 21)
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(img_rgb)
+        else:
+            img = img.filter(ImageFilter.MedianFilter(size=3))
 
     # Binarize
     if profile.binarize:

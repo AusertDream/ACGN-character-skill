@@ -56,3 +56,11 @@ benchmark/gold_standard/*.mp4
 benchmark/gold_standard/*.avi
 benchmark/gold_standard/*.mkv
 benchmark/
+
+# Logs and outputs
+logs/
+outputs/
+*.log
+
+# Archived experiments
+archive/

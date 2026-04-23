@@ -9,6 +9,7 @@ Handles speaker identification from name box OCR, including:
 
 from typing import Optional, Callable, Dict, List, Set
 from PIL import Image
+from tools.text_cleaning import clean_speaker_name
 
 
 # 默认特殊说话人映射
@@ -35,6 +36,7 @@ class SpeakerExtractor:
         inherit_speaker: bool = True,
         special_speakers: Optional[Dict[str, str]] = None,
         speaker_aliases: Optional[Dict[str, List[str]]] = None,
+        strict_whitelist: bool = False,
     ):
         """
         Initialize speaker extractor.
@@ -45,10 +47,13 @@ class SpeakerExtractor:
             inherit_speaker: 是否启用说话人继承
             special_speakers: 特殊说话人映射表，None 则使用默认映射
             speaker_aliases: 说话人别名映射，canonical name -> list of aliases
+            strict_whitelist: 若为 True，只接受在已知说话人集合中匹配的名字，
+                              不匹配则视为未识别，走继承机制
         """
         self.ocr_func = ocr_func
         self.confidence_threshold = confidence_threshold
         self.inherit_speaker = inherit_speaker
+        self.strict_whitelist = strict_whitelist
         self.special_speakers = special_speakers if special_speakers is not None else DEFAULT_SPECIAL_SPEAKERS.copy()
 
         # 构建 alias -> canonical 反向映射
@@ -106,11 +111,17 @@ class SpeakerExtractor:
 
         # OCR 识别
         text, confidence = self.ocr_func(name_box_crop)
-        text = text.strip()
+        text = clean_speaker_name(text)
 
         # 空文本或置信度不足
         if not text or confidence < self.confidence_threshold:
             return self._try_inherit()
+
+        # strict_whitelist 模式：名字必须在已知说话人集合中
+        if self.strict_whitelist and text not in self._known_speakers:
+            # 尝试模糊匹配（允许 OCR 偏差 1 个字符的编辑距离）
+            if not self._fuzzy_match_known(text):
+                return self._try_inherit()
 
         # 归一化特殊说话人
         speaker = self._normalize_speaker(text)
@@ -120,6 +131,36 @@ class SpeakerExtractor:
         self._last_confidence = confidence
 
         return (speaker, confidence)
+
+    def _fuzzy_match_known(self, name: str) -> bool:
+        """Check if name fuzzy-matches any known speaker (edit distance <= 1)."""
+        for known in self._known_speakers:
+            if len(known) == 0:
+                continue
+            # Allow edit distance of 1 for OCR typos
+            if abs(len(name) - len(known)) > 1:
+                continue
+            distance = 0
+            i, j = 0, 0
+            while i < len(name) and j < len(known):
+                if name[i] != known[j]:
+                    distance += 1
+                    if distance > 1:
+                        break
+                    if len(name) > len(known):
+                        i += 1
+                    elif len(name) < len(known):
+                        j += 1
+                    else:
+                        i += 1
+                        j += 1
+                else:
+                    i += 1
+                    j += 1
+            distance += (len(name) - i) + (len(known) - j)
+            if distance <= 1:
+                return True
+        return False
 
     def _try_inherit(self) -> tuple[Optional[str], float]:
         """尝试继承上一个说话人。"""

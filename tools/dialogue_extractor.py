@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any, List, Set
 from PIL import Image
 
 from tools.ocr_engines import create_ocr_func  # noqa: F401 -- re-export for backwards compat
+from tools.text_cleaning import clean_ocr_text, _contains_cjk
 
 
 class DialogueExtractor:
@@ -187,9 +188,12 @@ class DialogueExtractor:
         Args:
             dialog_candidates: Pre-captured OCR candidates from dialog OCR (not name-box).
 
-        Returns (is_review, output).
+        Returns (is_review, output), or (None, None) if the event was skipped.
         """
         from tools.output_formatter import event_to_output
+
+        # Post-processing: clean OCR text
+        event.text = clean_ocr_text(event.text)
 
         ocr_candidates = list(dialog_candidates) if dialog_candidates else []
 
@@ -450,6 +454,7 @@ class DialogueExtractor:
         speaker_extractor = SpeakerExtractor(
             fusion.recognize, speaker_aliases=self.speaker_aliases,
             special_speakers=self.special_speakers,
+            strict_whitelist=False,
         )
         self._speaker_extractor = speaker_extractor  # For _parse_speaker_from_text
         known_speakers = speaker_extractor.known_speakers
@@ -489,6 +494,14 @@ class DialogueExtractor:
                     current_selection_reason = fusion.get_selection_reason()
 
                     if finalized_event:
+                        # Skip non-dialogue frames: empty/no-CJK text with low confidence
+                        cleaned_text = clean_ocr_text(finalized_event.text)
+                        if (not cleaned_text or not _contains_cjk(cleaned_text)) and finalized_event.confidence < 0.3:
+                            print(f"  [skip] {finalized_event.event_id}: non-dialogue frame (text='{finalized_event.text.strip()[:40]}', conf={finalized_event.confidence:.2f})")
+                            cached_dialog_candidates = None
+                            cached_selection_reason = ""
+                            continue
+
                         event_count += 1
                         speaker = cached_speaker
                         speaker_conf = cached_speaker_conf
@@ -540,29 +553,34 @@ class DialogueExtractor:
                 # Flush remaining event
                 final_event = event_detector.flush(duration)
                 if final_event:
-                    event_count += 1
-                    speaker = cached_speaker
-                    speaker_conf = cached_speaker_conf
-                    if speaker is None:
-                        speaker, speaker_conf = self._parse_speaker_from_text(final_event, known_speakers)
+                    # Skip non-dialogue frames for final event too
+                    cleaned_final_text = clean_ocr_text(final_event.text)
+                    if (not cleaned_final_text or not _contains_cjk(cleaned_final_text)) and final_event.confidence < 0.3:
+                        print(f"  [skip] {final_event.event_id}: non-dialogue frame (text='{final_event.text.strip()[:40]}', conf={final_event.confidence:.2f})")
+                    else:
+                        event_count += 1
+                        speaker = cached_speaker
+                        speaker_conf = cached_speaker_conf
+                        if speaker is None:
+                            speaker, speaker_conf = self._parse_speaker_from_text(final_event, known_speakers)
 
-                    provenance = {"source_file": str(self.video_path)}
-                    final_crop = last_dialog_crop or (vp.crop_roi(last_frame, "dialog_box") if last_frame else None) or Image.new("RGB", (100, 50))
-                    final_frame = last_frame or Image.new("RGB", (100, 50))
+                        provenance = {"source_file": str(self.video_path)}
+                        final_crop = last_dialog_crop or (vp.crop_roi(last_frame, "dialog_box") if last_frame else None) or Image.new("RGB", (100, 50))
+                        final_frame = last_frame or Image.new("RGB", (100, 50))
 
-                    is_review, _ = self._process_finalized_event(
-                        final_event, speaker, speaker_conf,
-                        final_frame, final_crop, vp,
-                        cached_dialog_candidates,
-                        cached_selection_reason,
-                        jsonl_file, provenance,
-                    )
-                    if is_review:
-                        review_count += 1
+                        is_review, _ = self._process_finalized_event(
+                            final_event, speaker, speaker_conf,
+                            final_frame, final_crop, vp,
+                            cached_dialog_candidates,
+                            cached_selection_reason,
+                            jsonl_file, provenance,
+                        )
+                        if is_review:
+                            review_count += 1
 
-                    speaker_str = speaker or "?"
-                    text_preview = final_event.text[:30] + ("..." if len(final_event.text) > 30 else "")
-                    print(f"  [{final_event.event_id}] {speaker_str}: {text_preview}")
+                        speaker_str = speaker or "?"
+                        text_preview = final_event.text[:30] + ("..." if len(final_event.text) > 30 else "")
+                        print(f"  [{final_event.event_id}] {speaker_str}: {text_preview}")
             finally:
                 jsonl_file.close()
 
@@ -572,7 +590,7 @@ class DialogueExtractor:
             event_count -= merged_count
 
         if self.jsonl_path.exists():
-            convert_jsonl_to_text(self.jsonl_path, self.text_path, include_review_flagged=False)
+            convert_jsonl_to_text(self.jsonl_path, self.text_path, include_review_flagged=True)
             # Also generate a review transcript with all events
             review_text_path = self.output_dir / f"{self.video_id}_review.txt"
             convert_jsonl_to_text(self.jsonl_path, review_text_path, include_review_flagged=True)
@@ -581,12 +599,29 @@ class DialogueExtractor:
 
         self._delete_checkpoint()
 
+        # VLM post-processing for review_required events
+        vlm_summary = None
+        if review_count > 0 and self.work_config and self.work_config.vlm_enabled:
+            print(f"[vlm] Starting VLM post-processing for {review_count} review events")
+            from tools.vlm_postprocess import process_review_events_with_vlm
+            vlm_summary = process_review_events_with_vlm(
+                jsonl_path=self.jsonl_path,
+                crops_dir=self.crops_dir,
+            )
+
+            if vlm_summary.get("pending_processing"):
+                print(f"[vlm] Batch prepared: {vlm_summary['batch_count']} events")
+                print(f"[vlm] Batch file: {vlm_summary['batch_file']}")
+                print(f"[vlm] Corrections file: {vlm_summary['corrections_file']}")
+                print(f"[vlm] Main agent should now spawn subagent to process batch")
+
         summary = {
             "total_events": event_count,
             "review_count": review_count,
             "duration_processed": duration,
             "jsonl_path": str(self.jsonl_path),
             "text_path": str(self.text_path),
+            "vlm_summary": vlm_summary,
         }
         print(f"[done] {event_count} events extracted, {review_count} flagged for review")
         return summary
@@ -778,7 +813,7 @@ class BatchRunner:
             ))
 
         with Pool(processes=actual_workers) as pool:
-            for summary in pool.imap_unordered(lambda args: _process_single_video(*args), tasks):
+            for summary in pool.starmap(_process_single_video, tasks):
                 self._save_batch_progress(summary)
                 summaries.append(summary)
 

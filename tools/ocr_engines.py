@@ -48,24 +48,83 @@ def _create_paddleocr():
     device = "gpu:0" if use_gpu else "cpu"
     print(f"PaddleOCR using device: {device}")
     ocr = PaddleOCR(
-        use_textline_orientation=True,
+        use_textline_orientation=False,
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         lang="ch",
         device=device,
+        text_det_thresh=0.2,
+        text_det_box_thresh=0.35,
+        text_det_unclip_ratio=2.0,
+        text_det_limit_side_len=960,
     )
+
+    def _poly_area(poly):
+        """Compute polygon area using the shoelace formula."""
+        n = len(poly)
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += poly[i][0] * poly[j][1]
+            area -= poly[j][0] * poly[i][1]
+        return abs(area) / 2.0
 
     def ocr_func(image: Image.Image) -> tuple[str, float]:
         import numpy as np
+        img_w, img_h = image.size
         img_array = np.array(image)
         result = ocr.predict(img_array)
         for res in result:
             rec_texts = res.get("rec_texts", []) if isinstance(res, dict) else getattr(res, "rec_texts", [])
             rec_scores = res.get("rec_scores", []) if isinstance(res, dict) else getattr(res, "rec_scores", [])
-            if rec_texts:
-                text = " ".join(rec_texts)
-                conf = sum(rec_scores) / len(rec_scores)
-                return (text, conf)
+            dt_polys = res.get("dt_polys", []) if isinstance(res, dict) else getattr(res, "dt_polys", [])
+            if not rec_texts:
+                continue
+
+            edge_margin = 8
+            min_area = 150
+            min_conf = 0.4
+
+            filtered_texts = []
+            filtered_scores = []
+            filtered_areas = []
+
+            for i, text in enumerate(rec_texts):
+                poly = dt_polys[i] if i < len(dt_polys) else None
+                score = rec_scores[i] if i < len(rec_scores) else 0.0
+
+                if score < min_conf:
+                    continue
+
+                if poly is not None:
+                    pts = [[float(p[0]), float(p[1])] for p in poly]
+                    area = _poly_area(pts)
+                    if area < min_area:
+                        continue
+                    cx = sum(p[0] for p in pts) / len(pts)
+                    cy = sum(p[1] for p in pts) / len(pts)
+                    if cx < edge_margin or cx > img_w - edge_margin:
+                        continue
+                    if cy < edge_margin or cy > img_h - edge_margin:
+                        continue
+                else:
+                    area = 1.0
+
+                filtered_texts.append(text)
+                filtered_scores.append(score)
+                filtered_areas.append(area)
+
+            if not filtered_texts:
+                return ("", 0.0)
+
+            joined_text = " ".join(filtered_texts)
+            if len(filtered_scores) == 1:
+                conf = filtered_scores[0]
+            else:
+                total_area = sum(filtered_areas)
+                conf = sum(s * a for s, a in zip(filtered_scores, filtered_areas)) / total_area
+
+            return (joined_text, conf)
         return ("", 0.0)
 
     return ocr_func
