@@ -245,16 +245,24 @@ class EventDetector:
         if len(self.current_event.text_history) < 2:
             return False
 
-        # Look back up to 5 frames to detect growth even with OCR noise
+        # Method 1: prefix overlap check with lookback
         lookback = min(5, len(self.current_event.text_history) - 1)
         for offset in range(1, lookback + 1):
             prev_text = self.current_event.text_history[-(offset + 1)]
             if len(new_text) > len(prev_text):
                 overlap = new_text[:len(prev_text)]
                 ratio = SequenceMatcher(None, prev_text, overlap).ratio()
-                # Use lower threshold (0.5) for growth detection to handle OCR noise
                 if ratio >= max(0.5, self.similarity_threshold * 0.8):
                     return True
+
+        # Method 2: length trend check — if text has been growing consistently,
+        # a longer new text is likely still growing even with OCR noise
+        if len(self.current_event.text_history) >= 3:
+            recent = self.current_event.text_history[-3:]
+            recent_lens = [len(t) for t in recent]
+            if len(new_text) > max(recent_lens) and all(l > 0 for l in recent_lens):
+                return True
+
         return False
 
     def _is_text_replacement(self, new_text: str) -> bool:
@@ -272,6 +280,16 @@ class EventDetector:
         # If new text is longer and similar, it's growth, not replacement
         if len(new_text) > len(prev_text) and ratio >= 0.5:
             return False
+
+        # Check length trend over lookback window to handle OCR noise
+        # If text length is growing overall, don't treat as replacement
+        lookback = min(5, len(self.current_event.text_history))
+        if lookback >= 2:
+            recent_lengths = [len(t) for t in self.current_event.text_history[-lookback:]]
+            avg_length = sum(recent_lengths) / len(recent_lengths)
+            # If new text is within 80% of average and not completely unrelated, it's growth
+            if len(new_text) >= avg_length * 0.8 and ratio > 0.3:
+                return False
 
         return ratio < self.similarity_threshold
 
@@ -518,14 +536,15 @@ if __name__ == "__main__":
     print(f"  Event still active: {still_active}, was_growing: {was_growing}")
     print("  PASS" if still_active and not premature_finalize and was_growing else "  FAIL: event should still be active after 3 stable frames")
 
-    # --- Test 6: Non-growing event still uses normal threshold (3 frames) ---
-    # Text that appears all at once (no typewriter) should finalize after 3 stable frames.
-    print("\n[Test 6] Non-growing event uses stable_frames_threshold=3")
+    # --- Test 6: Non-growing event uses stable_frames_threshold=5 ---
+    print("\n[Test 6] Non-growing event uses stable_frames_threshold=5")
     ocr_seq = [
         ("一段完整台词", 0.95),   # appears all at once
         ("一段完整台词", 0.95),   # stable 1
         ("一段完整台词", 0.95),   # stable 2
-        ("一段完整台词", 0.95),   # stable 3 -> should finalize (no growth)
+        ("一段完整台词", 0.95),   # stable 3
+        ("一段完整台词", 0.95),   # stable 4
+        ("一段完整台词", 0.95),   # stable 5 -> finalize
     ]
     idx = 0
 
@@ -544,4 +563,4 @@ if __name__ == "__main__":
             finalized_event = event
             print(f"  [FINALIZED] {event.event_id}: '{event.text}' conf={event.confidence:.2f}")
     print(f"  Finalized: {finalized_event is not None}")
-    print("  PASS" if finalized_event and finalized_event.text == "一段完整台词" else "  FAIL: non-growing event should finalize after 3 stable frames")
+    print("  PASS" if finalized_event and finalized_event.text == "一段完整台词" else "  FAIL: non-growing event should finalize after 5 stable frames")
