@@ -95,15 +95,7 @@ class DialogueExtractor:
         self._vlm_max_calls = 20
         self._vlm_call_count = 0
         if self.work_config and self.work_config.vlm_enabled:
-            try:
-                from tools.vlm_ocr import create_vlm_ocr_func
-                self._vlm_func = create_vlm_ocr_func(model=self.work_config.vlm_model)
-                self._vlm_threshold = self.work_config.vlm_threshold
-                self._vlm_max_calls = None if self.vlm_unlimited else self.work_config.vlm_max_calls_per_video
-                print(f"[init] VLM fallback enabled (threshold={self._vlm_threshold}, "
-                      f"max_calls={self._vlm_max_calls or 'unlimited'}, model={self.work_config.vlm_model})")
-            except (ImportError, ValueError) as e:
-                print(f"[init] VLM fallback disabled: {e}")
+            print(f"[init] VLM fallback is configured but vlm_ocr module has been archived. Skipping VLM.")
 
     # ------------------------------------------------------------------
     # Speaker parsing (uses per-work special_speakers)
@@ -599,21 +591,8 @@ class DialogueExtractor:
 
         self._delete_checkpoint()
 
-        # VLM post-processing for review_required events
+        # VLM post-processing (archived, skip)
         vlm_summary = None
-        if review_count > 0 and self.work_config and self.work_config.vlm_enabled:
-            print(f"[vlm] Starting VLM post-processing for {review_count} review events")
-            from tools.vlm_postprocess import process_review_events_with_vlm
-            vlm_summary = process_review_events_with_vlm(
-                jsonl_path=self.jsonl_path,
-                crops_dir=self.crops_dir,
-            )
-
-            if vlm_summary.get("pending_processing"):
-                print(f"[vlm] Batch prepared: {vlm_summary['batch_count']} events")
-                print(f"[vlm] Batch file: {vlm_summary['batch_file']}")
-                print(f"[vlm] Corrections file: {vlm_summary['corrections_file']}")
-                print(f"[vlm] Main agent should now spawn subagent to process batch")
 
         summary = {
             "total_events": event_count,

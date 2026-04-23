@@ -270,27 +270,30 @@ class EventDetector:
         if not self.current_event or not self.current_event.text_history:
             return False
 
-        # text_history hasn't been updated yet when this is called
         prev_text = self.current_event.text_history[-1]
         if not prev_text:
             return False
 
-        ratio = SequenceMatcher(None, prev_text, new_text).ratio()
-
-        # If new text is longer and similar, it's growth, not replacement
-        if len(new_text) > len(prev_text) and ratio >= 0.5:
+        # If new text contains the previous text as substring, it's growth
+        if len(new_text) > len(prev_text) and prev_text in new_text:
             return False
 
-        # Check length trend over lookback window to handle OCR noise
-        # If text length is growing overall, don't treat as replacement
-        lookback = min(5, len(self.current_event.text_history))
-        if lookback >= 2:
-            recent_lengths = [len(t) for t in self.current_event.text_history[-lookback:]]
-            avg_length = sum(recent_lengths) / len(recent_lengths)
-            # If new text is within 80% of average and not completely unrelated, it's growth
-            if len(new_text) >= avg_length * 0.8 and ratio > 0.3:
+        # If new text starts with the same prefix (>50% of shorter), it's growth
+        if len(new_text) > len(prev_text):
+            min_len = len(prev_text)
+            prefix = new_text[:min_len]
+            match_chars = sum(1 for a, b in zip(prev_text, prefix) if a == b)
+            if match_chars >= min_len * 0.5:
                 return False
 
+        # Check lookback: if new_text contains any recent text as substring
+        lookback = min(5, len(self.current_event.text_history))
+        for offset in range(1, lookback + 1):
+            hist_text = self.current_event.text_history[-offset]
+            if hist_text and len(hist_text) >= 2 and hist_text in new_text:
+                return False
+
+        ratio = SequenceMatcher(None, prev_text, new_text).ratio()
         return ratio < self.similarity_threshold
 
     def _text_similarity(self, text_a: str, text_b: str) -> float:
