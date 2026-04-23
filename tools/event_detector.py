@@ -71,7 +71,7 @@ class EventDetector:
         empty_frames_threshold: int = 2,
         min_text_length: int = 2,
         similarity_threshold: float = 0.6,
-        post_growth_stable_threshold: int = 5,
+        post_growth_stable_threshold: int = 8,
         work_config: Any = None,
     ):
         """
@@ -85,7 +85,7 @@ class EventDetector:
             similarity_threshold: Minimum similarity ratio for fuzzy prefix matching
             post_growth_stable_threshold: Stable frames needed after text was growing
                 (typewriter effect). Higher than stable_frames_threshold to avoid
-                premature finalization during typewriter pauses. Default 5 (2.5s at 2fps).
+                premature finalization during typewriter pauses. Default 8 (4s at 2fps).
             work_config: Optional WorkConfig object. If provided, threshold fields
                 from config override the corresponding parameters above.
         """
@@ -245,14 +245,15 @@ class EventDetector:
         if len(self.current_event.text_history) < 2:
             return False
 
-        # Look back up to 3 frames to detect growth even with OCR noise
-        lookback = min(3, len(self.current_event.text_history) - 1)
+        # Look back up to 5 frames to detect growth even with OCR noise
+        lookback = min(5, len(self.current_event.text_history) - 1)
         for offset in range(1, lookback + 1):
             prev_text = self.current_event.text_history[-(offset + 1)]
             if len(new_text) > len(prev_text):
                 overlap = new_text[:len(prev_text)]
                 ratio = SequenceMatcher(None, prev_text, overlap).ratio()
-                if ratio >= self.similarity_threshold:
+                # Use lower threshold (0.5) for growth detection to handle OCR noise
+                if ratio >= max(0.5, self.similarity_threshold * 0.8):
                     return True
         return False
 
@@ -267,6 +268,11 @@ class EventDetector:
             return False
 
         ratio = SequenceMatcher(None, prev_text, new_text).ratio()
+
+        # If new text is longer and similar, it's growth, not replacement
+        if len(new_text) > len(prev_text) and ratio >= 0.5:
+            return False
+
         return ratio < self.similarity_threshold
 
     def _text_similarity(self, text_a: str, text_b: str) -> float:
