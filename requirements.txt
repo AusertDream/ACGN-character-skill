@@ -1,26 +1,13 @@
 # ACGN-character-skill OCR dialogue extraction pipeline
-# Python 3.11+
+# Python 3.10+
 
 # Core dependencies
 Pillow>=10.0
 numpy>=1.24
-av>=12.0                    # PyAV - video frame extraction
+av>=12.0
 PyYAML>=6.0
-
-# Primary OCR engine
-# PaddlePaddle: install GPU version for CUDA acceleration
-# GPU (CUDA 13.0): pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
-# GPU (CUDA 12.6): pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
-# CPU only:        pip install paddlepaddle>=2.6
-paddlepaddle-gpu>=3.3.0
-paddleocr>=3.4              # PaddleOCR text recognition
-
-# Optional: fallback OCR engines (uncomment if needed)
-# easyocr>=1.7
-# rapidocr-onnxruntime>=1.3
-
-# GUI-based ROI calibration
 opencv-python>=4.8
-
-# VLM OCR fallback (optional, for low-confidence event recovery)
 anthropic>=0.40.0
+
+# PaddleOCR (install after paddlepaddle-gpu)
+paddleocr>=2.7

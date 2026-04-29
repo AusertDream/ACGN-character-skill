@@ -68,7 +68,7 @@ ls ${CLAUDE_SKILL_DIR}/characters/
 
 | 任务 | 使用工具 |
 |------|---------|
-| 视频对话提取（OCR） | `Bash` → `python3 -m tools.dialogue_extractor` （需在项目根目录运行） |
+| 视频对话提取（OCR） | `Bash` → `python3 -m tools.unified_pipeline` （需在项目根目录运行，`conda activate paddleocr`） |
 | 读取 PDF 文档 | `Read` 工具（原生支持 PDF） |
 | 读取图片截图 | `Read` 工具（原生支持图片） |
 | 读取 EPUB 小说 | `Bash` → `python3 -m tools.epub_reader` 转为文本后用 `Read` 读取 |
@@ -212,19 +212,23 @@ img.crop((int(W*{dialogue_x}), int(H*{dialogue_y}), int(W*({dialogue_x}+{dialogu
 
 **A3. 运行提取**
 
-单个视频：
+先激活 conda 环境：`conda activate paddleocr`
+
+单个视频（自动 ROI 检测）：
 ```bash
 cd ${CLAUDE_SKILL_DIR}
-python3 -m tools.dialogue_extractor "{video_path}" tools/configs/{work_id}.yaml \
-  --output-dir ./characters/{slug}/knowledge
+python3 -m tools.unified_pipeline "{video_path}" --auto-roi \
+  --output-dir ./characters/{slug}/knowledge --gpus 2,3
 ```
 
-批量处理（目录下所有视频）：
+单个视频（使用已有配置）：
 ```bash
 cd ${CLAUDE_SKILL_DIR}
-python3 -m tools.dialogue_extractor "{video_dir}" tools/configs/{work_id}.yaml \
-  --output-dir ./characters/{slug}/knowledge --batch --video-pattern "*.mp4"
+python3 -m tools.unified_pipeline "{video_path}" --config tools/configs/{work_id}.yaml \
+  --output-dir ./characters/{slug}/knowledge --gpus 2,3
 ```
+
+批量处理全部视频：`python3 -m tools.process_all_videos`
 
 如果存在多组布局，对每组分别用对应配置运行。
 
@@ -469,7 +473,7 @@ This Skill runs in the Claude Code environment with the following tools:
 
 | Task | Tool |
 |------|------|
-| Video dialogue extraction (OCR) | `Bash` → `python3 -m tools.dialogue_extractor` (run from project root) |
+| Video dialogue extraction (OCR) | `Bash` → `python3 -m tools.unified_pipeline` (run from project root, `conda activate paddleocr`) |
 | Read PDF documents | `Read` tool (native PDF support) |
 | Read image screenshots | `Read` tool (native image support) |
 | Read EPUB novels | `Bash` → `python3 -m tools.epub_reader` to convert, then `Read` the text |
@@ -613,18 +617,23 @@ If the selection is inaccurate, adjust the ROI coordinates and re-crop until bot
 
 **A3. Run Extraction**
 
-Single video:
+Activate conda env first: `conda activate paddleocr`
+
+Single video (auto ROI detection):
 ```bash
 cd ${CLAUDE_SKILL_DIR}
-python3 -m tools.dialogue_extractor "{video_path}" tools/configs/{work_id}.yaml \
-  --output-dir ./characters/{slug}/knowledge
+python3 -m tools.unified_pipeline "{video_path}" --auto-roi \
+  --output-dir ./characters/{slug}/knowledge --gpus 2,3
 ```
 
-Batch processing (all videos in a directory):
+Single video (with existing config):
 ```bash
 cd ${CLAUDE_SKILL_DIR}
-python3 -m tools.dialogue_extractor "{video_dir}" tools/configs/{work_id}.yaml \
-  --output-dir ./characters/{slug}/knowledge --batch --video-pattern "*.mp4"
+python3 -m tools.unified_pipeline "{video_path}" --config tools/configs/{work_id}.yaml \
+  --output-dir ./characters/{slug}/knowledge --gpus 2,3
+```
+
+Batch processing: `python3 -m tools.process_all_videos`
 ```
 
 If multiple layout groups exist, run each group separately with its corresponding config.

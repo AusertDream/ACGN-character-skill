@@ -6,32 +6,16 @@ and manual review. Supports provenance tracking for artifact traceability.
 """
 
 from pathlib import Path
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict
 from typing import Optional, List, Dict
 import json
 import re
 
 from tools.event_detector import DialogueEvent
 
-
-@dataclass
-class DialogueEventOutput:
-    """Output schema for dialogue events."""
-    video_id: str
-    event_id: str
-    start_ms: int
-    end_ms: int
-    speaker: Optional[str]
-    text: str
-    confidence: float
-    review_required: bool
-    # Optional provenance fields
-    source_file: Optional[str] = None
-    frame_file: Optional[str] = None
-    roi_crop_file: Optional[str] = None
-    name_crop_file: Optional[str] = None
-    ocr_candidates: Optional[List[Dict[str, object]]] = None
-    selection_reason: Optional[str] = None
+# Re-export the canonical schema so existing imports keep working.
+# DialogueEventOutput is defined in output_schema.py (single source of truth).
+from tools.output_schema import DialogueEventOutput  # noqa: F401  -- re-exported
 
 
 def _check_text_quality(text: str) -> bool:

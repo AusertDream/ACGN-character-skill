@@ -9,27 +9,36 @@ from typing import Callable
 from PIL import Image
 
 
-def create_ocr_func(engine: str) -> Callable[[Image.Image], tuple[str, float]]:
+def create_ocr_func(engine: str, gpu_id: int = 0, batch_size: int = None) -> Callable[[Image.Image], tuple[str, float]]:
     """
     Create an OCR function for the specified engine.
 
     Args:
         engine: OCR engine name ("paddleocr", "easyocr", "rapidocr")
+        gpu_id: GPU device ID (default: 0)
+        batch_size: Optional recognition batch size (PaddleOCR only)
 
     Returns:
         Callable that takes a PIL Image and returns (text, confidence)
     """
     if engine == "paddleocr":
-        return _create_paddleocr()
+        return _create_paddleocr(gpu_id, batch_size)
     elif engine == "easyocr":
-        return _create_easyocr()
+        return _create_easyocr(gpu_id)
     elif engine == "rapidocr":
         return _create_rapidocr()
     else:
         raise ValueError(f"Unknown OCR engine: {engine}. Supported: paddleocr, easyocr, rapidocr")
 
 
-def _create_paddleocr():
+def create_paddleocr_instance(gpu_id: int = 0, batch_size: int = None):
+    """Create and return a raw PaddleOCR instance.
+
+    Handles env var setup, device detection, and full configuration.
+    Use this when you need direct access to the PaddleOCR instance (e.g., for
+    batch prediction via predict()). For single-image OCR, use create_ocr_func()
+    which returns a pre-wrapped callable with post-filtering.
+    """
     import os
     os.environ.setdefault('FLAGS_call_stack_level', '2')
     os.environ.setdefault('PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK', 'True')
@@ -45,9 +54,10 @@ def _create_paddleocr():
 
     import paddle
     use_gpu = paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0
-    device = "gpu:0" if use_gpu else "cpu"
+    device = f"gpu:{gpu_id}" if use_gpu else "cpu"
     print(f"PaddleOCR using device: {device}")
-    ocr = PaddleOCR(
+
+    kwargs = dict(
         use_textline_orientation=False,
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
@@ -58,6 +68,14 @@ def _create_paddleocr():
         text_det_unclip_ratio=2.0,
         text_det_limit_side_len=960,
     )
+    if batch_size is not None:
+        kwargs["text_recognition_batch_size"] = batch_size
+
+    return PaddleOCR(**kwargs)
+
+
+def _create_paddleocr(gpu_id: int = 0, batch_size: int = None):
+    ocr = create_paddleocr_instance(gpu_id=gpu_id, batch_size=batch_size)
 
     def _poly_area(poly):
         """Compute polygon area using the shoelace formula."""
@@ -130,13 +148,13 @@ def _create_paddleocr():
     return ocr_func
 
 
-def _create_easyocr():
+def _create_easyocr(gpu_id: int = 0):
     try:
         import easyocr
     except ImportError:
         raise ImportError("EasyOCR not installed. Run: pip install easyocr")
 
-    reader = easyocr.Reader(["ch_sim", "en"], gpu=False)
+    reader = easyocr.Reader(["ch_sim", "en"], gpu=True, gpu_id=gpu_id)
 
     def ocr_func(image: Image.Image) -> tuple[str, float]:
         import numpy as np

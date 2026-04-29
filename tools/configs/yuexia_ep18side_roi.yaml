@@ -8,10 +8,10 @@ dialog_box:
   h: 0.125
 
 name_box:
-  x: 0.140
-  y: 0.705
-  w: 0.110
-  h: 0.075
+  x: 0.026
+  y: 0.046
+  w: 0.078
+  h: 0.056
 
 dialog_preprocess: game_dialogue
 name_preprocess: game_namebox

@@ -25,7 +25,7 @@
 
 </div>
 
-**目前最终效果还在优化与调试。还处于半成品的状态。**
+**OCR 对话提取管线现已完成统一架构重构（2026-04-29），截断率 1.25%（目标 <5%），文本可读性良好，可直接用于角色蒸馏。说话人识别仍是已知短板。**
 
 ## 这个项目做了什么
 
@@ -37,37 +37,30 @@ colleague-skill 的核心思路是将一个真实同事的专业能力和人格�
 
 ## 当前能力
 
-### 视频对话提取工具（tools/dialogue_extractor.py）
+### 视频对话提取管线（tools/unified_pipeline.py）
 
-基于 OCR-first 方案，从 ACGN 视觉小说风格视频中提取对话台本：
+统一端到端管线：`Video → AutoROICalibrator → FrameExtractor → BatchOCR → PostMerge → TextCorrector → JSONL + TXT`
 
-- **对话事件检测**：状态机驱动（IDLE → DETECTED → GROWING → STABLE → FINALIZED），围绕"对话事件"而非单帧识别
-- **打字机效果处理**：前缀增长检测 + 事后合并，189 个原始帧事件合并为 116 个完整对话事件
-- **ROI 精准识别**：只对名字框和对话框区域做 OCR，支持每部作品独立配置（tools/configs/）
-- **多引擎 OCR 融合**：PaddleOCR 主引擎 + EasyOCR 备用，置信度加权融合
-- **半透明背景预处理**：多种预处理 profile（plain_light_bg / plain_dark_bg / semi_transparent_hsv / outline_heavy）
-- **说话人识别**：名字框 OCR + 角色别名词典 + 上下文继承
-- **战斗/HUD 文本过滤**：正则过滤战斗演出、分数显示等非对话内容
-- **低置信度标记**：review_required 字段标记，5/116 事件（4.31%）需人工复核
-- **结构化输出**：JSONL（含 event_id、时间戳、speaker、text、confidence、review_required、provenance）+ 纯文本台本（[HH:MM:SS] Speaker: Dialogue 格式）
-- **断点续跑**：支持中断后从上次位置继续处理
-- **人工复核 UI**：review_server.py 提供 Web 界面，展示关键帧、ROI 图、OCR 候选
+- **自适应状态机**：增长率追踪 + 像素差分预触发 + Levenshtein 停时判据，正确处理打字机效果
+- **自动 ROI 检测**：利用 PaddleOCR DBNet 检测框聚类，无需手工配置对话框坐标
+- **Checkpoint/Resume**：中断后可从上次位置继续，每完成一个事件写检查点
+- **多 GPU 并行**：Stage 2 支持跨 GPU 批量 OCR，仅使用 GPU 2/3（L40S 45GB）
+- **后置纠错流水线**：正则规则 + 可选 LLM 纠错（deepseek-v4-flash/pro）
+- **结构化输出**：层级目录 `event_XXXXXX/{frame.png, dialog.png, name.png}` + JSONL + 纯文本台本
 
-**benchmark 验证结果（崩坏3仲夏幻夜，10分钟片段）：**
+**7 视频全量验证结果（崩坏3舰长线，9,026 事件）：**
 
-| 指标              | 值              | 目标          | 状态   |
-| --------------- | -------------- | ----------- | ---- |
-| Recall（时间重叠匹配）  | 100% (116/116) | ≥90%        | PASS |
-| Mean CER        | 6.64%          | user-agreed | PASS |
-| Duplicate rate  | 0%             | <10%        | PASS |
-| Review rate     | 4.31%          | <5%         | PASS |
-| False positives | 0              | 0           | PASS |
+| 指标 | 值 | 目标 | 状态 |
+|:---|:---|:---|:---|
+| 截断率（肉眼评估） | 1.25% | <5% | PASS |
+| 文本可读性 | 3.5-4/5 | 通顺可读 | PASS |
+| OCR 噪声比例 | 5-10% | 可接受 | — |
+| 说话人识别 | 1-3/5 | 已知短板 | 待解决 |
 
 ### 角色 Skill 创建器（SKILL.md）
 
 - 从 OCR 提取的对话文本提取角色设定（Story）和五层人格（Persona）
-- 支持增量更新：追加新视频数据自动 merge
-- 支持对话纠正：说"她不会这样说"自动写入 Correction 记录
+- 支持增量更新和对话纠正
 
 ---
 
@@ -91,41 +84,29 @@ colleague-skill 的核心思路是将一个真实同事的专业能力和人格�
 
 ```
 ACGN-character-skill/
-├── SKILL.md                    # 角色 Skill 创建器入口（/ACGN-character.skill）
-├── prompts/                    # Prompt 模板
-│   ├── story_analyzer.md       #   角色设定提取
-│   ├── persona_analyzer.md     #   角色人格提取
-│   └── ...
+├── SKILL.md                    # 角色 Skill 创建器入口
+├── prompts/                    # Prompt 模板（story/persona analyzer & builder）
 ├── tools/
-│   ├── dialogue_extractor.py   #   OCR 对话提取主入口
-│   ├── event_detector.py       #   对话事件检测状态机
+│   ├── unified_pipeline.py     #   统一 CLI 入口，串联全流程
+│   ├── frame_extractor.py      #   Stage 1 事件检测 + 帧保存（checkpoint/resume）
+│   ├── batch_ocr.py            #   Stage 2 批量 OCR 处理器
+│   ├── event_detector.py       #   自适应状态机（增长率+MAD skip+Levenshtein）
+│   ├── auto_roi.py             #   自动 ROI 检测（PaddleOCR dt_polys 聚类）
+│   ├── post_merge.py           #   后置前缀合并 + 战斗文字过滤
+│   ├── llm_corrector.py        #   LLM OCR 纠错（deepseek-v4-flash/pro，可选）
 │   ├── ocr_engines.py          #   OCR 引擎工厂（PaddleOCR/EasyOCR/RapidOCR）
 │   ├── ocr_fusion.py           #   多引擎 OCR 融合策略
-│   ├── video_processor.py      #   视频帧提取与 ROI 裁剪
-│   ├── speaker_extractor.py    #   说话人识别与别名归一化
+│   ├── ocr_postprocess.py      #   正则纠错规则
+│   ├── output_schema.py        #   统一输出格式定义
+│   ├── metrics.py              #   性能指标追踪
 │   ├── preprocessing.py        #   图像预处理 profile
-│   ├── output_formatter.py     #   JSONL 结构化输出
-│   ├── text_output.py          #   JSONL → 纯文本转换
-│   ├── review_ui.py            #   人工复核 HTML 页面生成
-│   ├── roi_calibrator.py       #   交互式 ROI 校准工具
-│   └── configs/
-│       └── yuexia.yaml         #   月下 ROI 配置
+│   ├── speaker_extractor.py    #   说话人识别与别名归一化
+│   ├── video_processor.py      #   视频帧提取与 ROI 裁剪
+│   ├── work_config.py          #   配置系统
+│   └── configs/                #   每部作品的 ROI 配置文件
 ├── characters/
-│   └── yuexia/                 #   月下的生成产物（/character-yuexia）
-│       ├── SKILL.md
-│       ├── story.md
-│       └── persona.md
+│   └── yuexia/                 #   月下的生成产物
 └── benchmark/                  #   评估数据与脚本
-```
-
-另有以下数据目录（视频文件不纳入版本控制）：
-
-```
-training data/                  # 原始视频 + OCR 提取产物
-├── *.mp4                       #   崩坏3舰长线剧情视频（8个，gitignored）
-├── ocr_output/                 #   OCR 对话提取产物（.jsonl + .txt）
-└── acknowledgement.txt         #   视频来源说明
-live2d/                         # 月下 Live2D 模型文件
 ```
 
 ---
@@ -230,19 +211,20 @@ Live2D 来源：B站 [支线路人A](https://space.bilibili.com/1152374880)
 
 ## OCR 对话提取
 
-项目使用 PaddleOCR 作为主引擎，EasyOCR 作为备用引擎，通过 ROI 区域裁剪 + 状态机事件检测 + 打字机合并的方式从游戏剧情视频中提取对话台本。每部作品需要一份独立的 ROI 配置文件（`tools/configs/*.yaml`），定义对话框和名字框的位置。
+统一端到端管线：自动 ROI 检测 → 自适应状态机事件检测 → 批量 OCR → 后置合并 → 文本纠错 → JSONL + 纯文本输出。
 
-运行方式（需要安装 paddlepaddle 和 paddleocr）：
+运行方式（需先 `conda activate paddleocr`，GPU 仅限 2/3）：
 
 ```bash
-# 单个视频
-python -m tools.dialogue_extractor "training data/视频文件.mp4" tools/configs/yuexia.yaml --output-dir "training data/ocr_output"
+# 单个视频（自动 ROI 检测）
+python -m tools.unified_pipeline "video.mp4" --auto-roi --gpus 2,3
 
-# 批量处理
-python -m tools.dialogue_extractor "training data" tools/configs/yuexia.yaml --output-dir "training data/ocr_output" --batch --video-pattern "*.mp4"
+# 单个视频（使用已有配置）
+python -m tools.unified_pipeline "video.mp4" --config tools/configs/yuexia.yaml --gpus 2,3
+
+# 批量处理全部视频
+python -m tools.process_all_videos
 ```
-
-提取产物保存在输出目录下，每个视频对应一个 `.jsonl`（结构化数据）和一个 `.txt`（纯文本台本）文件。
 
 ---
 
