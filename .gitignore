@@ -12,6 +12,9 @@ test/
 # API配置（包含敏感信息）
 benchmark/config.yaml
 
+# 当前工作进展（包含机器特定信息）
+current_work.md
+
 # Claude Code
 .claude/
 .humanize*

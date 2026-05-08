@@ -6,13 +6,13 @@
 
 本仓库是一个 Claude Code Skill。Skill 是 Claude Code 的扩展能力单元，以一个包含 `SKILL.md` 的仓库形式存在，安装到 Claude Code 后可以通过 `/` 命令触发。当用户在 Claude Code 中输入对应的斜杠命令时，Claude 会读取 SKILL.md 中定义的指令、工具使用规则和工作流程，按照其中的步骤自动执行任务。一个 Skill 本质上是对 Claude 的行为编程——它告诉 Claude 在被触发时该做什么、怎么做、用哪些工具、按什么顺序，相当于一套可复用的自动化工作流。
 
-本项目的 SKILL.md 定义了一个"ACGN 虚构角色蒸馏器"。它的核心能力是：接收用户提供的角色相关原材料（游戏剧情视频、文档、文本等），通过 OCR 提取对话、LLM 分析人格和设定，最终生成一个可以进行角色扮演对话的子 Skill。生成的子 Skill 也是一个 SKILL.md 文件，存放在 `characters/{角色名}/SKILL.md`，用户可以通过 `/ACGN-character {角色名}` 直接与该角色对话。换句话说，这是一个"生成 Skill 的 Skill"——它自身是一个创建器，它的产物也是 Skill。
+本项目的 SKILL.md 定义了一个"ACGN 虚构角色蒸馏器"。它的核心能力是：接收用户提供的角色相关原材料（游戏剧情视频、文档、文本等），通过 OCR 提取对话、LLM 分析人格和设定，最终生成一套结构化的角色扮演 prompt（story.md + persona.md + 合并后的 SKILL.md），存放在 `characters/{角色名}/` 目录下。用户通过 `/ACGN-character {角色名}` 触发时，Claude 读取该角色的设定并以角色身份进行对话。
 
 ## 项目概述
 
-本项目是一个博士研究项目中的核心工具，目标是将 ACGN（Anime/Comic/Game/Novel）领域的虚构角色"蒸馏"为可对话的 AI Skill。整个系统的工作流程是：从游戏剧情视频中通过 OCR 提取角色对话文本，再从这些对话中提取角色的故事设定（Story）和五层人格特征（Persona），最终生成一个能以角色本人的语气说话、以角色的方式思考、带着角色情感回应的角色扮演 Skill。项目架构参考了 colleague-skill 的二层蒸馏方法，将其"同事能力 + 人格"框架迁移到虚构角色领域，替换为"角色设定 + 人格"。当前的首个实例是崩坏3舰长线角色「月下」，训练数据来源于B站UP主MC神神希发布的崩坏3舰长线全剧情合集视频。
+本项目是一个博士研究项目中的核心工具，目标是将 ACGN（Anime/Comic/Game/Novel）领域的虚构角色"蒸馏"为可对话的角色扮演 prompt。整个系统的工作流程是：从游戏剧情视频中通过 OCR 提取角色对话文本，再从这些对话中提取角色的故事设定（Story）和五层人格特征（Persona），最终生成一套能让 Claude 以角色本人的语气说话、以角色的方式思考、带着角色情感回应的角色扮演指令。项目架构参考了 colleague-skill 的二层蒸馏方法，将其"同事能力 + 人格"框架迁移到虚构角色领域，替换为"角色设定 + 人格"。当前的首个实例是崩坏3舰长线角色「月下」，训练数据来源于B站UP主MC神神希发布的崩坏3舰长线全剧情合集视频。
 
-项目目前处于半成品状态。OCR 对话提取管线已完成统一架构重构（2026-04-28），采用自适应状态机替代固定阈值，支持自动 ROI 检测、checkpoint/resume、多引擎 OCR 融合、后置前缀合并和可选 LLM 纠错。角色 Skill 生成部分已有初步框架但效果还在调试。
+项目目前处于半成品状态。OCR 对话提取管线已完成统一架构重构（2026-04-28），采用自适应状态机替代固定阈值，ROI 使用手工标注（已放弃自动检测方案），支持 checkpoint/resume、多引擎 OCR 融合、后置前缀合并和可选 LLM 纠错。角色扮演 prompt 生成部分已有初步框架但效果还在调试。
 
 ## Skill 使用流程
 
@@ -92,30 +92,22 @@ Stage 2（`batch_ocr.py`）的 `BatchOCRProcessor` 自动检测输入目录结�
 
 ## 环境要求
 
-项目需要 Python 3.11+ 运行环境，使用 conda 环境 `paddleocr`（已预装全部依赖，`conda activate paddleocr` 激活）。核心依赖包括 Pillow、numpy、PyAV（视频帧提取）、PyYAML、opencv-python（CLAHE 预处理和 ROI 校准）。OCR 引擎使用 PaddlePaddle GPU 版 + PaddleOCR。可选依赖包括 EasyOCR 和 RapidOCR 作为备用引擎。LLM 纠错可选，需设置 `DEEPSEEK_API_KEY` 环境变量。
-
-**GPU 约束**：仅使用 GPU 2 和 GPU 3（NVIDIA L40S，每卡 45GB 显存）。GPU 0 和 1 被其他用户占用，所有命令默认 `--gpus 2,3`，严禁设为 0 或 1。单卡可工作时自动 fallback。
+项目需要 Python 3.11+ 运行环境，使用 conda 环境 `paddleocr`（已预装全部依赖，`conda activate paddleocr` 激活）。核心依赖包括 Pillow、numpy、PyAV（视频帧提取）、PyYAML、opencv-python（CLAHE 预处理和 ROI 校准）。OCR 引擎使用 PaddlePaddle GPU 版 + PaddleOCR。可选依赖包括 EasyOCR 和 RapidOCR 作为备用引擎。LLM 纠错可选，需设置 `DEEPSEEK_API_KEY` 环境变量。GPU 选择通过 `CUDA_VISIBLE_DEVICES` 环境变量指定，程序内部统一使用设备 0（即 CUDA_VISIBLE_DEVICES 中的第一张可见卡）。
 
 ## 运行命令
 
-统一端到端命令：`python -m tools.unified_pipeline VIDEO --config CONFIG.yaml --output-dir OUT --auto-roi --llm-correct --gpus 2,3`。会自动依次完成 ROI 检测→帧提取→OCR→合并→纠错→文本输出。
+统一端到端命令：`CUDA_VISIBLE_DEVICES=0 python -m tools.unified_pipeline VIDEO --config CONFIG.yaml --output-dir OUT --llm-correct`。会自动依次完成帧提取→OCR→合并→纠错→文本输出。
 
-Stage 1 单独运行：`python -m tools.frame_extractor "视频路径" tools/configs/yuexia.yaml --output-dir OUT --fps 2.0 --gpu-id 2`。Stage 2 单独运行：`python -m tools.batch_ocr "Stage1输出目录" --output ocr_results.jsonl --gpu-id 2`。
+批量处理全部 7 个视频：`CUDA_VISIBLE_DEVICES=0 python -m tools.process_all_videos`（使用 `/data2/training_data/` 下的视频文件和 per-episode YAML 配置）。
 
-自动 ROI 检测：`python -m tools.auto_roi "视频路径" --output configs/my_work.yaml --gpu-id 2`。
+手工 ROI 标注：`python -m tools.roi_annotator --port 11451`，浏览器打开 `http://localhost:11451`，左侧切换视频，画蓝色对话框和红色名字框，Ctrl+S 保存。
 
 后置合并和过滤：`python -m tools.post_merge ocr_results.jsonl`。
 
-批量处理全部 7 个视频：`python -m tools.process_all_videos`（使用 `/data2/training_data/` 下的视频文件和 per-episode YAML 配置）。
-
-分析截断率使用 `analyze_truncation.py` 脚本。
-
-所有命令在项目根目录运行，需先 `conda activate paddleocr`。GPU 仅限 2 和 3，严禁使用 0 或 1。
+所有命令在项目根目录运行，需先 `conda activate paddleocr`。
 
 ## 已知问题
 
-打字机截断已通过自适应状态机（增长率追踪+MAD skip+Levenshtein 停时判据）和后置前缀合并两道防线进行系统性改进，待在实际视频上验证截断率是否降至 5% 以下。
+打字机截断已通过自适应状态机（增长率追踪+MAD skip+Levenshtein 停时判据）和后置前缀合并解决，截断率从 23.3% 降至 <0.2%。
 
-说话人识别仍存在噪声问题，`speaker_extractor.py` 的 `strict_whitelist` 模式和 `ocr_postprocess.py` 的模糊匹配规则可部分缓解。名字框 ROI 精度仍需关注。
-
-ROI 配置现支持自动检测（`auto_roi.py`），通过 PaddleOCR dt_polys 聚类自动生成 YAML，减少手工校准工作量。但自动检测结果需验证（内置 5 帧采样验证），失败时仍需手工校准。
+说话人 OCR 后缀噪声（EKR、福、享、Ta] 等）已通过 LLM 批量去噪处理（deepseek-v4-flash）。ROI 配置使用手工标注（`roi_annotator.py`），已放弃自动检测方案（`auto_roi.py` 保留但不推荐使用）。

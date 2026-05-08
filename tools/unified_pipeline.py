@@ -12,9 +12,9 @@ Orchestrates the complete pipeline from video input to plain text dialogue outpu
 
 Usage:
     python -m tools.unified_pipeline VIDEO_PATH [--config CONFIG] [--output-dir DIR] \
-        [--auto-roi] [--sam-namebox] [--no-resume] [--llm-correct] [--gpus 2,3]
+        [--auto-roi] [--sam-namebox] [--no-resume] [--llm-correct]
 
-All GPU operations default to GPU 2 or the specified --gpus list, never GPU 0 or 1.
+GPU selection is done via CUDA_VISIBLE_DEVICES environment variable.
 The conda environment "paddleocr" must be active before running.
 """
 
@@ -49,8 +49,8 @@ class UnifiedPipeline:
     and produces artifacts in the output directory.
 
     The pipeline is designed to be importable as a module and usable as a CLI.
-    All GPU operations use the specified GPU IDs, defaulting to [2, 3] to avoid
-    interfering with GPU 0 or 1 which may be in use by other processes.
+    All GPU operations use the first visible CUDA device (set via
+    CUDA_VISIBLE_DEVICES environment variable).
     """
 
     def __init__(
@@ -79,7 +79,9 @@ class UnifiedPipeline:
                 at /data2/models/sam1/sam_vit_h_4b8939.pth.
             resume: If True, resume Stage 1 from checkpoint when available.
             llm_correct: If True, apply LLM-based text correction.
-            gpu_ids: List of GPU device IDs to use. Defaults to [2, 3].
+            gpu_ids: Deprecated, ignored. GPU selection is done via
+                CUDA_VISIBLE_DEVICES environment variable. Kept for backward
+                compatibility only.
             target_fps: Frames per second for video sampling.
         """
         self.video_path = Path(video_path)
@@ -88,7 +90,9 @@ class UnifiedPipeline:
         self.sam_namebox = sam_namebox
         self.resume = resume
         self.llm_correct = llm_correct
-        self.gpu_ids = gpu_ids if gpu_ids is not None else [2, 3]
+        # GPU selection is handled by CUDA_VISIBLE_DEVICES, internal code
+        # always uses device 0 (the first visible GPU).
+        self.gpu_ids = [0]
         self.target_fps = target_fps
         self._config = None
 
@@ -767,14 +771,14 @@ Examples:
   # Use existing config with custom output directory
   python -m tools.unified_pipeline video.mp4 -c configs/yuexia.yaml -o ./output
 
-  # Single GPU, no resume, with LLM correction
-  python -m tools.unified_pipeline video.mp4 -c config.yaml --gpus 2 --no-resume --llm-correct
+  # No resume, with LLM correction
+  CUDA_VISIBLE_DEVICES=3 python -m tools.unified_pipeline video.mp4 -c config.yaml --no-resume --llm-correct
 
-  # Multi-GPU with specific FPS
-  python -m tools.unified_pipeline video.mp4 -c config.yaml --gpus 2,3,4 --fps 3.0
+  # Custom FPS
+  CUDA_VISIBLE_DEVICES=2 python -m tools.unified_pipeline video.mp4 -c config.yaml --fps 3.0
 
 Note: The conda environment "paddleocr" must be active before running.
-All GPU operations default to GPU 2 (or --gpus) - never GPU 0 or 1.
+GPU selection is done via CUDA_VISIBLE_DEVICES environment variable.
         """,
     )
     parser.add_argument(
@@ -821,8 +825,8 @@ All GPU operations default to GPU 2 (or --gpus) - never GPU 0 or 1.
     parser.add_argument(
         "--gpus",
         type=str,
-        default="2,3",
-        help="Comma-separated GPU device IDs (default: 2,3)",
+        default=None,
+        help="Deprecated, ignored. Use CUDA_VISIBLE_DEVICES instead.",
     )
     parser.add_argument(
         "--fps",
@@ -832,17 +836,6 @@ All GPU operations default to GPU 2 (or --gpus) - never GPU 0 or 1.
     )
 
     args = parser.parse_args()
-
-    # Parse GPU IDs from comma-separated string
-    try:
-        gpu_ids = [int(x.strip()) for x in args.gpus.split(",")]
-    except ValueError:
-        print(
-            f"ERROR: Invalid --gpus value: '{args.gpus}'. "
-            f"Expected comma-separated integers, e.g. '2,3'.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
 
     # Validate video file exists
     if not args.video_path.exists():
@@ -870,7 +863,7 @@ All GPU operations default to GPU 2 (or --gpus) - never GPU 0 or 1.
         sam_namebox=args.sam_namebox,
         resume=not args.no_resume,
         llm_correct=args.llm_correct,
-        gpu_ids=gpu_ids,
+        gpu_ids=None,  # ignored, kept for compat
         target_fps=args.fps,
     )
 

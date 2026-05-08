@@ -51,6 +51,72 @@ def _clean(text: str) -> str:
     return clean_speaker_name(text.strip())
 
 
+def _position_score(
+    fx: int, fy: int, fwb: int, fhb: int,
+    dx: int, dy: int, dw: int, dh: int,
+    fw: int, fh: int,
+) -> float:
+    """Score a mask by how well it matches expected name box geometry.
+
+    Name boxes in VN games are:
+      - Left-aligned with the dialog box (x ~= dialog x)
+      - Positioned just above the dialog (small gap)
+      - Wider than tall (aspect ratio 2:1 to 10:1)
+      - Narrow relative to dialog width (10-40% of dw)
+
+    Returns a score in [0, 1], higher = better position match.
+    """
+    score = 0.0
+
+    # Horizontal alignment: penalty grows with distance from dialog left edge
+    x_diff = abs(fx - dx)
+    if x_diff < dw * 0.08:
+        score += 0.40
+    elif x_diff < dw * 0.15:
+        score += 0.30
+    elif x_diff < dw * 0.25:
+        score += 0.15
+    elif x_diff < dw * 0.50:
+        score += 0.05
+    else:
+        return 0.0  # too far right, can't be a name box
+
+    # Vertical gap: name box MUST sit just above dialog.
+    # This is the strongest constraint — the name box is never far from
+    # the dialog box. If the gap is too large, reject immediately.
+    gap = dy - (fy + fhb)
+    if gap > 0:
+        gap_ratio = gap / max(dh, 1)
+        if gap_ratio < 0.15:
+            score += 0.35
+        elif gap_ratio < 0.30:
+            score += 0.25
+        elif gap_ratio < 0.80:
+            score += 0.10
+        else:
+            return 0.0  # too far above dialog
+    elif gap > -dh * 0.08:
+        score += 0.10  # slightly inside dialog, still possible
+    else:
+        return 0.0  # mask is deep inside dialog or below, not a name box
+
+    # Aspect ratio: name box is wider than tall
+    ar = fwb / max(fhb, 1)
+    if 2.5 <= ar <= 8.0:
+        score += 0.15
+    elif 1.8 <= ar < 2.5 or 8.0 < ar <= 12.0:
+        score += 0.08
+
+    # Width relative to dialog: name box is narrower
+    width_ratio = fwb / max(dw, 1)
+    if 0.08 <= width_ratio <= 0.40:
+        score += 0.10
+    elif 0.04 <= width_ratio < 0.08 or 0.40 < width_ratio <= 0.60:
+        score += 0.05
+
+    return score
+
+
 def calibrate_namebox(
     video_path: str,
     dialog_box: Dict[str, float],
@@ -130,11 +196,13 @@ def calibrate_namebox(
         dw = int(dialog_box["w"] * fw)
         dh = int(dialog_box["h"] * fh)
 
-        # search region: dialog width, from above dialog to dialog top
-        sx1 = max(0, dx - int(dw * 0.15))
-        sx2 = min(fw, dx + dw + int(dw * 0.15))
+        # Search region: LEFT portion above dialog box only.
+        # Name boxes in VN games are consistently left-aligned with the dialog
+        # box, never on the right side. Restrict to left ~40% of dialog width.
+        sx1 = max(0, dx - int(dw * 0.05))
+        sx2 = min(fw, dx + int(dw * 0.40))
         sy2 = dy
-        sy1 = max(0, dy - int(dh * 4.0))
+        sy1 = max(0, dy - int(dh * 3.0))
 
         if sx2 <= sx1 or sy2 <= sy1:
             continue
@@ -162,6 +230,13 @@ def calibrate_namebox(
             if fy + fhb > dy + int(dh * 0.2):  # must be above dialog
                 continue
 
+            # Positional score as FILTER: discard masks that can't be a name box.
+            # Name boxes are left-aligned above the dialog with a small gap.
+            pos_score = _position_score(
+                fx, fy, fwb, fhb, dx, dy, dw, dh, fw, fh)
+            if pos_score < 0.25:
+                continue  # wrong position, not a name box candidate
+
             # OCR this mask
             mc = frame.crop((
                 max(0, fx), max(0, fy),
@@ -170,7 +245,7 @@ def calibrate_namebox(
             pre = apply_profile(mc, name_prof)
             res = ocr_inst.predict(np.array(pre))
 
-            best_score = 0.0
+            ocr_score = 0.0
             texts_found: List[str] = []
             for r in res:
                 rt = r.get("rec_texts", [])
@@ -180,33 +255,50 @@ def calibrate_namebox(
                     if s > 0.4 and t:
                         texts_found.append(t)
                         if t in KNOWN_SPEAKERS:
-                            best_score = max(best_score, 1.0 + s)
+                            ocr_score = max(ocr_score, 1.0 + s)
                         elif _has_cjk(t):
-                            best_score = max(best_score, 0.3 + s * 0.5)
+                            ocr_score = max(ocr_score, 0.3 + s * 0.5)
 
-            if best_score > 0.3:
+            # Require reasonable position AND meaningful OCR
+            if ocr_score > 0.25 and pos_score > 0.30:
                 candidates.append((
-                    best_score, m["stability_score"], fi,
-                    fx, fy, fwb, fhb, fw, fh, texts_found,
+                    ocr_score, pos_score, m["stability_score"],
+                    fi, fx, fy, fwb, fhb, fw, fh, texts_found,
                 ))
 
     if not candidates:
-        logger.warning("No OCR-positive name box candidates found")
+        logger.warning("No high-confidence name box candidates found. "
+                       "Keeping manual config — SAM cannot improve it.")
         return None
 
-    # best candidate (by OCR score, then stability)
-    candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    # Best candidate: rank by OCR score (position already filtered).
+    # Among ties, prefer higher positional score and stability.
+    candidates.sort(key=lambda c: (c[0], c[1], c[2]), reverse=True)
     best = candidates[0]
-    sx = best[3] / best[7]
-    sy = best[4] / best[8]
-    sw = best[5] / best[7]
-    sh = best[6] / best[8]
+    # tuple: (ocr_score, pos_score, stability, fi, fx, fy, fwb, fhb, fw, fh, texts)
+    sx = best[4] / best[8]
+    sy = best[5] / best[9]
+    sw = best[6] / best[8]
+    sh = best[7] / best[9]
+
+    # Tighten the box: SAM masks often cover the full semi-transparent
+    # background strip, which is much larger than the actual name text.
+    # Scale width down (name text is ~10-20% of dialog width) and height
+    # down (name text is ~40-60% of a single text line height).
+    tw = sw * 0.35  # tighten to ~35% of SAM mask width
+    th = sh * 0.45  # tighten to ~45% of SAM mask height
+    # Re-center: keep same left edge, adjust vertically to top portion
+    # (the text is typically in the upper part of the mask, closer to
+    # the dialog box since it appears right above it)
+    tx = sx
+    ty = sy + (sh - th) * 0.7  # bias toward bottom (closer to dialog)
 
     logger.info(
-        "Name box: x=%.4f y=%.4f w=%.4f h=%.4f  (score=%.2f, text=%s, %d candidates)",
-        sx, sy, sw, sh, best[0], best[9][:3], len(candidates),
+        "Name box: x=%.4f y=%.4f w=%.4f h=%.4f  (tightened from %.4f,%.4f,%.4f,%.4f)"
+        "  (ocr=%.2f pos=%.2f, text=%s, %d candidates)",
+        tx, ty, tw, th, sx, sy, sw, sh, best[0], best[1], best[10][:3], len(candidates),
     )
-    return {"x": round(sx, 4), "y": round(sy, 4), "w": round(sw, 4), "h": round(sh, 4)}
+    return {"x": round(tx, 4), "y": round(ty, 4), "w": round(tw, 4), "h": round(th, 4)}
 
 
 # ── CLI ───────────────────────────────────────────────────────────────

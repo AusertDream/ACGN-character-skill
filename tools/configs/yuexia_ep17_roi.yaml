@@ -1,31 +1,29 @@
 work_id: yuexia
-name: "月下 - 崩坏三舰长线 - 第十七节"
-
+name: 月下 - 崩坏三舰长线 - 第十七节
 dialog_box:
-  x: 0.140
+  x: 0.1494
   y: 0.815
-  w: 0.700
+  w: 0.7
   h: 0.125
-
 name_box:
-  x: 0.140
-  y: 0.715
-  w: 0.110
-  h: 0.075
-
+  x: 0.1914
+  y: 0.7458
+  w: 0.5852
+  h: 0.0611
 dialog_preprocess: game_dialogue
 name_preprocess: game_namebox
-
 ocr_engine: paddleocr
 target_fps: 2.0
 review_threshold: 0.7
-
 speaker_aliases:
   舰长: []
-  姬子: [姬子老师]
-  琪亚娜: [琪亚]
+  姬子:
+  - 姬子老师
+  琪亚娜:
+  - 琪亚
   芽衣: []
-  布洛妮娅: [布洛妮]
+  布洛妮娅:
+  - 布洛妮
   德丽莎: []
   符华: []
   旁白: []

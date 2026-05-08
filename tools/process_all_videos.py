@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""批量处理所有视频：使用 UnifiedPipeline 端到端转换"""
+"""批量处理所有视频：使用 UnifiedPipeline 端到端转换
 
-import sys
+用法：
+    CUDA_VISIBLE_DEVICES=3 python -m tools.process_all_videos
+    CUDA_VISIBLE_DEVICES=2 python -m tools.process_all_videos --data-dir /other/path
+
+通过 CUDA_VISIBLE_DEVICES 环境变量指定使用哪张 GPU，程序内部不做 GPU 选择。
+"""
+
+import argparse
 from pathlib import Path
-from typing import List, Tuple
 import logging
 
 from tools.unified_pipeline import UnifiedPipeline
@@ -14,7 +20,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 视频到配置文件的映射
 VIDEO_CONFIGS = {
     "ep01": ("崩坏三舰长线全剧情合集，第一节", "tools/configs/yuexia_ep01_roi.yaml"),
     "ep17": ("崩坏三舰长线全剧情合集第十七节", "tools/configs/yuexia_ep17_roi.yaml"),
@@ -27,20 +32,13 @@ VIDEO_CONFIGS = {
 
 
 def find_video_file(pattern: str, base_dir: Path) -> Path:
-    """查找视频文件：匹配 pattern 前缀的 mp4 文件"""
     for f in base_dir.glob("*.mp4"):
         if f.name.startswith(pattern):
             return f
     raise FileNotFoundError(f"找不到匹配 '{pattern}*' 的视频文件")
 
 
-def process_video(video_key: str, base_dir: Path, output_base: Path,
-                  gpu_ids: List[int] = None) -> dict:
-    """处理单个视频：UnifiedPipeline 端到端"""
-
-    if gpu_ids is None:
-        gpu_ids = [2, 3]
-
+def process_video(video_key: str, base_dir: Path) -> dict:
     print(f"\n{'='*60}")
     print(f"处理视频: {video_key}")
     print(f"{'='*60}")
@@ -58,11 +56,10 @@ def process_video(video_key: str, base_dir: Path, output_base: Path,
     pipeline = UnifiedPipeline(
         video_path=video_path,
         config_path=config_path,
-        output_dir=None,  # auto-generate
+        output_dir=None,
         auto_roi=False,
         resume=True,
         llm_correct=False,
-        gpu_ids=gpu_ids,
     )
 
     summary = pipeline.run()
@@ -70,29 +67,28 @@ def process_video(video_key: str, base_dir: Path, output_base: Path,
     if summary.get("error"):
         raise RuntimeError(summary["error"])
 
-    return {
-        "status": "success",
-        "summary": summary,
-    }
+    return {"status": "success", "summary": summary}
 
 
 def main():
-    base_dir = Path("/data2/training_data")
-    output_base = base_dir / "ocr_output"
+    import os
+    if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+        print("WARNING: 未设置 CUDA_VISIBLE_DEVICES，PaddleOCR 将使用默认 GPU。")
+        print("建议用法: CUDA_VISIBLE_DEVICES=3 python -m tools.process_all_videos")
 
-    gpu_ids = [2, 3]
+    parser = argparse.ArgumentParser(description="批量处理所有视频")
+    parser.add_argument("--data-dir", type=Path, default=Path("/data2/training_data"),
+                        help="视频数据目录（默认 /data2/training_data）")
+    args = parser.parse_args()
 
     results = {}
     for video_key in VIDEO_CONFIGS.keys():
         try:
-            result = process_video(video_key, base_dir, output_base, gpu_ids=gpu_ids)
+            result = process_video(video_key, args.data_dir)
             results[video_key] = result
         except Exception as e:
             print(f"\n✗ {video_key} 处理失败: {e}")
-            results[video_key] = {
-                "status": "failed",
-                "error": str(e)
-            }
+            results[video_key] = {"status": "failed", "error": str(e)}
 
     print(f"\n{'='*60}")
     print("处理总结")

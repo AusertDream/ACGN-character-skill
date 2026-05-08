@@ -3,29 +3,18 @@ Plain Text Output for Dialogue Events
 
 Converts JSONL dialogue events to plain text format compatible with
 story_analyzer.md and persona_analyzer.md prompts.
+
+Supports both the full DialogueEventOutput schema (with video_id, start_ms,
+etc.) and the simplified batch_ocr output schema (event_id, text, speaker).
 """
 
 from pathlib import Path
 import json
 import argparse
 
-from tools.output_formatter import DialogueEventOutput
-
 
 def format_timestamp(ms: int) -> str:
-    """
-    Convert milliseconds to [HH:MM:SS] format.
-
-    Args:
-        ms: Timestamp in milliseconds
-
-    Returns:
-        Formatted timestamp string like [00:02:05]
-
-    Example:
-        >>> format_timestamp(125300)
-        '[00:02:05]'
-    """
+    """Convert milliseconds to [HH:MM:SS] format."""
     total_seconds = ms // 1000
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
@@ -33,28 +22,28 @@ def format_timestamp(ms: int) -> str:
     return f"[{hours:02d}:{minutes:02d}:{seconds:02d}]"
 
 
-def format_dialogue_line(event: DialogueEventOutput) -> str:
+def format_dialogue_dict(data: dict) -> str:
+    """Format a single dialogue event dict as plain text.
+
+    Works with both full-schema and simplified-schema JSONL records.
     """
-    Format a single dialogue event as plain text.
+    text = data.get("text", "").strip()
+    if not text:
+        return ""
 
-    Args:
-        event: DialogueEventOutput object
+    speaker = data.get("speaker", "")
+    start_ms = data.get("start_ms")
 
-    Returns:
-        Formatted line like "[HH:MM:SS] Speaker: Text" or "[HH:MM:SS] Text"
+    parts = []
+    if start_ms is not None:
+        parts.append(format_timestamp(int(start_ms)))
 
-    Example:
-        >>> event = DialogueEventOutput(...)
-        >>> format_dialogue_line(event)
-        '[00:00:10] 莉莉娅: 梦莎莉娅梦莎莉娅，是的没错，他醒了。'
-    """
-    timestamp = format_timestamp(event.start_ms)
-
-    # If speaker is None or empty, omit speaker prefix
-    if event.speaker:
-        return f"{timestamp} {event.speaker}: {event.text}"
+    if speaker:
+        parts.append(f"{speaker}: {text}")
     else:
-        return f"{timestamp} {event.text}"
+        parts.append(text)
+
+    return " ".join(parts)
 
 
 def convert_jsonl_to_text(
@@ -62,21 +51,11 @@ def convert_jsonl_to_text(
     output_path: Path,
     include_review_flagged: bool = True
 ):
-    """
-    Convert JSONL dialogue events to plain text format.
-
-    Args:
-        jsonl_path: Path to input JSONL file
-        output_path: Path to output text file
-        include_review_flagged: If False, skip events where review_required=True
-
-    Raises:
-        FileNotFoundError: If input file doesn't exist
-        json.JSONDecodeError: If JSONL format is invalid
-    """
+    """Convert JSONL dialogue events to plain text format."""
     if not jsonl_path.exists():
         raise FileNotFoundError(f"Input file not found: {jsonl_path}")
 
+    count = 0
     with open(jsonl_path, "r", encoding="utf-8") as infile, \
          open(output_path, "w", encoding="utf-8") as outfile:
 
@@ -87,22 +66,20 @@ def convert_jsonl_to_text(
 
             try:
                 data = json.loads(line)
-                event = DialogueEventOutput(**data)
-
-                # Skip review-flagged events if requested
-                if not include_review_flagged and event.review_required:
-                    continue
-
-                # Format and write the dialogue line
-                formatted_line = format_dialogue_line(event)
-                outfile.write(formatted_line + "\n\n")
-
             except json.JSONDecodeError as e:
                 print(f"Warning: Skipping invalid JSON at line {line_num}: {e}")
                 continue
-            except TypeError as e:
-                print(f"Warning: Invalid event data at line {line_num}: {e}")
+
+            # Skip review-flagged events if requested
+            if not include_review_flagged and data.get("review_required"):
                 continue
+
+            formatted = format_dialogue_dict(data)
+            if formatted:
+                outfile.write(formatted + "\n\n")
+                count += 1
+
+    print(f"Wrote {count} dialogue lines to {output_path}")
 
 
 if __name__ == "__main__":

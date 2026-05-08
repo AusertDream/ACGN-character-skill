@@ -25,13 +25,19 @@
 
 </div>
 
-**OCR 对话提取管线现已完成统一架构重构（2026-04-29），截断率 1.25%（目标 <5%），文本可读性良好，可直接用于角色蒸馏。说话人识别仍是已知短板。**
+**OCR 对话提取管线现已完成统一架构重构（2026-05-08），截断率 <0.2%（目标 <5%），文本可读性良好，可直接用于角色蒸馏。说话人 OCR 后缀噪声已通过 LLM 批量去噪处理。**
+
+## 什么是 Skill
+
+Skill 是 Claude Code 的扩展能力单元，以一个包含 `SKILL.md` 的 Git 仓库形式存在。安装到 Claude Code 后，可以通过斜杠命令（如 `/ACGN-character`）触发。当用户输入对应命令时，Claude 会读取 SKILL.md 中定义的指令、工具使用规则和工作流程，按照其中的步骤自动执行任务。
+
+本项目是一个**角色蒸馏工具 Skill**。它从游戏视频中提取对话，分析角色的故事设定和人格特征，生成结构化的角色扮演 prompt。这些 prompt 让 Claude 能够以该角色的身份、语气、思维方式进行对话。
 
 ## 这个项目做了什么
 
-colleague-skill 的核心思路是将一个真实同事的专业能力和人格特征分别提取、结构化，然后合并为一个可执行的 AI Skill。本项目将这一方法迁移到虚构角色领域：用 OCR 对话提取替代聊天记录采集，用角色设定（Story）替代工作能力（Work），用适配后的5层人格模型捕捉角色的说话方式、情感模式和行为准则。
+colleague-skill 的核心思路是将一个真实同事的专业能力和人格特征分别提取、结构化，然后合并为一套可执行的角色扮演指令。本项目将这一方法迁移到虚构角色领域：用 OCR 对话提取替代聊天记录采集，用角色设定（Story）替代工作能力（Work），用适配后的5层人格模型捕捉角色的说话方式、情感模式和行为准则。
 
-整个流程：游戏剧情视频 → OCR 对话提取 → 角色信息提取 → 结构化生成 → 可对话的角色 Skill。
+整个流程：游戏剧情视频 → OCR 对话提取 → 角色信息提取 → 结构化生成 → 角色扮演 prompt → Claude 以角色身份对话。
 
 ---
 
@@ -39,27 +45,32 @@ colleague-skill 的核心思路是将一个真实同事的专业能力和人格�
 
 ### 视频对话提取管线（tools/unified_pipeline.py）
 
-统一端到端管线：`Video → AutoROICalibrator → FrameExtractor → BatchOCR → PostMerge → TextCorrector → JSONL + TXT`
+统一端到端管线：`Video → FrameExtractor → BatchOCR → PostMerge → SpeakerDenoiser → TextCorrector → JSONL + TXT`
 
-- **自适应状态机**：增长率追踪 + 像素差分预触发 + Levenshtein 停时判据，正确处理打字机效果
-- **自动 ROI 检测**：利用 PaddleOCR DBNet 检测框聚类，无需手工配置对话框坐标
+- **自适应状态机**：增长率追踪 + 像素差分预触发（MAD skip）+ Levenshtein 停时判据，正确处理打字机效果
+- **手工 ROI 标注**：网页工具 `roi_annotator.py`，可视化标注对话框和名字框坐标（已放弃自动检测方案）
 - **Checkpoint/Resume**：中断后可从上次位置继续，每完成一个事件写检查点
-- **多 GPU 并行**：Stage 2 支持跨 GPU 批量 OCR，仅使用 GPU 2/3（L40S 45GB）
+- **说话人识别**：
+  - 空白名字框 → 旁白
+  - 全问号名字框（???）→ 未知角色
+  - 正常名字 → 保持原样（不做归一化）
+- **说话人去噪**：LLM 批量清理 OCR 后缀噪声（deepseek-v4-flash），修正率 4.48%
 - **后置纠错流水线**：正则规则 + 可选 LLM 纠错（deepseek-v4-flash/pro）
 - **结构化输出**：层级目录 `event_XXXXXX/{frame.png, dialog.png, name.png}` + JSONL + 纯文本台本
 
-**7 视频全量验证结果（崩坏3舰长线，9,026 事件）：**
+**7 视频全量验证结果（崩坏3舰长线，9,000 事件）：**
 
 | 指标 | 值 | 目标 | 状态 |
 |:---|:---|:---|:---|
-| 截断率（肉眼评估） | 1.25% | <5% | PASS |
+| 截断率（人工评估） | <0.2% | <5% | PASS |
 | 文本可读性 | 3.5-4/5 | 通顺可读 | PASS |
-| OCR 噪声比例 | 5-10% | 可接受 | — |
-| 说话人识别 | 1-3/5 | 已知短板 | 待解决 |
+| 说话人识别率 | 73-93% | 可用 | PASS |
+| OCR 后缀噪声 | 已清理 | — | PASS |
 
 ### 角色 Skill 创建器（SKILL.md）
 
 - 从 OCR 提取的对话文本提取角色设定（Story）和五层人格（Persona）
+- 生成结构化的角色扮演 prompt，让 Claude 以角色身份对话
 - 支持增量更新和对话纠正
 
 ---
@@ -91,8 +102,9 @@ ACGN-character-skill/
 │   ├── frame_extractor.py      #   Stage 1 事件检测 + 帧保存（checkpoint/resume）
 │   ├── batch_ocr.py            #   Stage 2 批量 OCR 处理器
 │   ├── event_detector.py       #   自适应状态机（增长率+MAD skip+Levenshtein）
-│   ├── auto_roi.py             #   自动 ROI 检测（PaddleOCR dt_polys 聚类）
+│   ├── roi_annotator.py        #   网页版手工 ROI 标注工具
 │   ├── post_merge.py           #   后置前缀合并 + 战斗文字过滤
+│   ├── speaker_denoiser.py     #   说话人 OCR 噪声清洗
 │   ├── llm_corrector.py        #   LLM OCR 纠错（deepseek-v4-flash/pro，可选）
 │   ├── ocr_engines.py          #   OCR 引擎工厂（PaddleOCR/EasyOCR/RapidOCR）
 │   ├── ocr_fusion.py           #   多引擎 OCR 融合策略
@@ -100,7 +112,7 @@ ACGN-character-skill/
 │   ├── output_schema.py        #   统一输出格式定义
 │   ├── metrics.py              #   性能指标追踪
 │   ├── preprocessing.py        #   图像预处理 profile
-│   ├── speaker_extractor.py    #   说话人识别与别名归一化
+│   ├── speaker_extractor.py    #   说话人识别（空白→旁白，???→未知角色）
 │   ├── video_processor.py      #   视频帧提取与 ROI 裁剪
 │   ├── work_config.py          #   配置系统
 │   └── configs/                #   每部作品的 ROI 配置文件
@@ -122,25 +134,22 @@ ACGN-character-skill/
 ### 安装 Skill
 
 ```bash
-# 安装角色创建器
+# 安装角色蒸馏工具
 npx skills add AusertDream/ACGN-character-skill
-
-# 安装月下角色
-npx skills add AusertDream/ACGN-character-skill/tree/main/characters/yuexia
 ```
 
 安装完成后，在 Claude Code 中：
 
 ```
-/ACGN-character.skill    # 创建新角色 Skill
-/character-yuexia        # 与月下对话
+/ACGN-character          # 创建新角色或与已有角色对话
+/ACGN-character yuexia   # 直接进入月下角色扮演模式
 ```
 
 ---
 
-## 生成的 Skill 结构
+## 生成的角色扮演 prompt 结构
 
-月下的最终 Skill（`characters/yuexia/SKILL.md`）由两部分组成：
+月下的最终角色扮演 prompt（`characters/yuexia/SKILL.md`）由两部分组成：
 
 | 部分                | 内容                                       |
 | ----------------- | ---------------------------------------- |
@@ -211,19 +220,20 @@ Live2D 来源：B站 [支线路人A](https://space.bilibili.com/1152374880)
 
 ## OCR 对话提取
 
-统一端到端管线：自动 ROI 检测 → 自适应状态机事件检测 → 批量 OCR → 后置合并 → 文本纠错 → JSONL + 纯文本输出。
+统一端到端管线：手工 ROI 标注 → 自适应状态机事件检测 → 批量 OCR → 后置合并 → 说话人去噪 → 文本纠错 → JSONL + 纯文本输出。
 
-运行方式（需先 `conda activate paddleocr`，GPU 仅限 2/3）：
+运行方式（需先 `conda activate paddleocr`，GPU 通过 `CUDA_VISIBLE_DEVICES` 指定）：
 
 ```bash
-# 单个视频（自动 ROI 检测）
-python -m tools.unified_pipeline "video.mp4" --auto-roi --gpus 2,3
-
 # 单个视频（使用已有配置）
-python -m tools.unified_pipeline "video.mp4" --config tools/configs/yuexia.yaml --gpus 2,3
+CUDA_VISIBLE_DEVICES=0 python -m tools.unified_pipeline "video.mp4" --config tools/configs/yuexia_ep01_roi.yaml
 
 # 批量处理全部视频
-python -m tools.process_all_videos
+CUDA_VISIBLE_DEVICES=0 python -m tools.process_all_videos
+
+# 手工 ROI 标注（不需要 GPU）
+python -m tools.roi_annotator --port 11451
+# 浏览器打开 http://localhost:11451，画蓝色对话框和红色名字框，Ctrl+S 保存
 ```
 
 ---
@@ -235,6 +245,127 @@ python -m tools.process_all_videos
 **追加材料**：提供新的视频文件，通过 OCR 提取对话后自动分析增量内容并 merge 到 story.md 和 persona.md 中，不覆盖已有结论。
 
 **对话纠正**：在角色扮演过程中说「她不会这样说」「她应该是……」，系统会识别纠正意图，生成 Correction 记录写入对应文件，立即生效。
+
+---
+
+## 开发历程
+
+这个项目从 2025 年 9 月开始，经历了大量试错和重构。以下是主要的技术演进过程，记录下来供参考。
+
+### Phase 1: 基础设施搭建（2025-09 至 2025-11）
+
+最初的想法很简单：用 OCR 从游戏视频里提取对话，然后训练一个角色 AI。第一步是解决 ROI（Region of Interest）标注问题——需要告诉 OCR 引擎对话框和名字框在视频的哪个位置。
+
+**ROI 校准工具的演进**：一开始用 OpenCV 的 `cv2.selectROI()` 做交互式标注（commit a5fe81c），用鼠标框选区域。但这个方案有个问题：每次标注都要重新运行脚本，而且标注结果不能可视化验证。后来改成了网页版的 `roi_annotator.py`（commit 382 lines），左侧列出所有视频，右侧画布上用蓝色框标对话框、红色框标名字框，Ctrl+S 保存到 YAML 配置文件。这个工具一直用到现在。
+
+**视频处理基础设施**：最初用 ffmpeg 命令行提取帧（commit dd66375），但 ffmpeg 的 subprocess 调用不稳定，而且难以精确控制帧率。后来换成了 PyAV（commit f78e225），直接用 Python 操作视频容器，按时间戳精确采样，稳定性好很多。
+
+### Phase 2: 事件检测状态机（2025-11 至 2025-12）
+
+OCR 引擎选了 PaddleOCR（GPU 加速，中文识别准确），但很快遇到了核心难题：**如何判断一句对话什么时候结束？**
+
+游戏剧情视频里的对话通常有"打字机效果"——文字逐字逐句显现，而不是一次性全部出现。如果每一帧都 OCR 一次，会得到大量重复和不完整的文本片段。需要一个状态机来判断：这句话是在增长（还没说完），还是已经稳定（说完了），还是被新的一句话替换了。
+
+**第一版状态机**（commit 4e774c9）：设计了 5 个状态（IDLE → DETECTED → GROWING → STABLE → FINALIZED），用固定阈值判断文本是否增长。逻辑是：如果连续 3 帧文本长度不变，就认为对话结束。这个版本能跑通，但截断率很高——打字机效果中文字可能会短暂停顿然后继续增长，固定阈值会在停顿时过早地判定结束。
+
+**说话人识别**（commit a3ab2e7）：除了对话内容，还需要识别是谁在说话。名字框的 OCR 结果经常是空的（游戏里很多对话不显示名字），所以加了"说话人继承"机制——如果当前帧名字框为空，就继承上一个已知的说话人。这个逻辑一直保留到现在。
+
+**打字机截断问题的持续调试**（2025-12 至 2026-04）：截断问题困扰了很久。尝试过很多方案：
+
+- 增加稳定帧阈值（从 3 帧改到 5 帧，commit 5a63b4c）
+- 降低相似度阈值（从 0.6 降到 0.5）
+- 区分"经历过增长"和"从未增长"的事件，给前者更长的等待时间（post_growth_stable_threshold = 10）
+- 修复文本替换判断逻辑（commit 0686c7d）：之前用 SequenceMatcher 计算相似度，但"灼热的空"和"灼热的空气让肺部最后一丝生息也变得虚无"的相似度只有 0.21，会被误判为替换。改成先检查子串包含关系和前缀匹配，再用相似度兜底。
+
+但这些调整都是治标不治本，截断率从最初的 23.3% 降到了 5% 左右，但还是不够理想。
+
+**后置合并方案**（commit 8762bc9, 200c791）：既然实时判断很难做到完美,那就在 OCR 完成后做后处理。`post_merge.py` 会扫描所有事件，找到"同一说话人 + 时间间隔 <5s + 前缀相似度 ≥0.65"的相邻事件，把它们合并成一个完整对话。这个方案把截断率降到了 1% 以下。
+
+### Phase 3: 自适应状态机（2026-04-28）
+
+后置合并虽然有效，但治标不治本。真正的解决方案是让状态机变得更聪明——不用固定阈值，而是根据文本增长速度动态调整等待时间。
+
+**增长率追踪**（commit 85e8849）：用滑动窗口（SMA(5)）计算每帧的字符增长速度 `delta_chars_per_frame`，通过 sigmoid 函数映射为连续的增长置信度 [0,1]，然后动态计算稳定阈值 = max(5, int(growth_confidence * 15))。打字速度快就少等，慢就多等。
+
+**像素差分预触发（MAD skip）**：活跃事件期间，计算当前帧与上一帧 ROI 的 Mean Absolute Difference。如果 MAD < 2%（画面几乎没变化），直接跳过 OCR，等同于空帧。这个优化减少了 30-40% 的 OCR 调用，大幅提升了处理速度。
+
+**累积 Levenshtein 停时判据**：用滑动窗口（size=3）累加编辑距离，只有当累积编辑距离 ≤2 且自适应阈值帧数已过，才最终确定事件。这个机制处理了 OCR 抖动导致的微小字符变化（比如"的"和"地"反复横跳）。
+
+这三个机制组合后，截断率降到了 <0.2%，终于达到了可用标准。
+
+### Phase 4: ROI 自动检测的失败尝试（2026-03 至 2026-04）
+
+手工标注 ROI 很繁琐，每个视频都要打开网页工具画框。想过能不能自动检测？
+
+**自动检测方案**（commit d27fe0b, 86a6bb1）：`auto_roi.py` 的思路是：采样视频前 2 分钟约 40 帧，运行 PaddleOCR detection-only 模式（只检测文本框位置，不识别内容），收集所有检测框的 y 坐标，用 DBSCAN 聚类找到对话框区域（最下方的聚类）和名字框区域（对话框上方的聚类），输出标准 WorkConfig YAML。
+
+**为什么放弃**：自动检测在理想情况下能工作，但实际视频里有太多干扰因素——战斗 HUD、特效字幕、半透明对话框、动态背景。DBSCAN 聚类经常把这些噪声也聚进来，导致 ROI 不准确。而且自动检测的结果需要人工验证（内置了 5 帧采样验证），验证失败还是要手工校准，反而增加了工作量。最终决定还是用手工标注，一次标准、长期可用，反而更可靠。
+
+### Phase 5: 说话人识别的噪声问题（2026-04 至 2026-05）
+
+名字框的 OCR 结果经常带有后缀噪声，比如"舰长EKR"、"姬子福"、"琪亚娜享"、"芽衣Ta]"。这些噪声来自 OCR 引擎把名字框边缘的装饰元素或背景纹理误识别为文字。
+
+**最初的方案**：在 `speaker_extractor.py` 里加了别名映射（speaker_aliases），手工维护一个"正确名字 → 可能的错误变体"的字典。但这个方案不可扩展——每次发现新的噪声模式都要手工添加规则。
+
+**LLM 去噪方案**（commit 84a773f）：写了 `speaker_denoiser.py`，用 deepseek-v4-flash 批量清理 OCR 结果。给 LLM 提供角色名单（舰长、姬子、琪亚娜、芽衣、布洛妮娅、德丽莎、符华、旁白、系统），让它判断每个 OCR 结果应该映射到哪个正确名字。处理了 9,000 个事件，修正了 403 个错误（4.48% 修正率），效果很好。
+
+**特殊说话人处理**：除了角色名字，还有两种特殊情况需要处理：
+- 空白名字框（OCR 返回空字符串或纯空格）→ 映射为"旁白"
+- 全是问号的名字框（"???"、"？？？"）→ 映射为"未知角色"
+
+这两个规则在 `speaker_extractor.py` 里实现，优先级高于 LLM 去噪。
+
+### Phase 6: 管线架构统一（2026-04-28）
+
+最初的管线是分散的——`dialogue_extractor.py` 做帧提取，`batch_ocr.py` 做 OCR，`post_merge.py` 做后处理，`llm_corrector.py` 做纠错，每个步骤都要手工调用，中间结果要手工传递。
+
+**统一管线**（commit 85e8849）：`unified_pipeline.py` 把所有步骤串联成一个端到端的流程：
+
+```
+Stage 0: Setup（创建输出目录）
+Stage 1: Auto ROI detection（可选，已废弃）
+Stage 1.5: SAM name box refinement（可选，实验性）
+Stage 2: Frame extraction（FrameExtractor + 自适应状态机）
+Stage 3: Batch OCR（多 GPU 并行）
+Stage 4: Post-merge（前缀合并 + 战斗文字过滤）
+Stage 5: Text correction（正则规则 + 可选 LLM）
+Stage 6: Plain text output（JSONL → TXT）
+```
+
+一条命令完成全流程：
+```bash
+CUDA_VISIBLE_DEVICES=3 python -m tools.unified_pipeline video.mp4 --config config.yaml --llm-correct
+```
+
+**Checkpoint/Resume**：Stage 2 的 FrameExtractor 支持断点续传——每完成一个事件就写 checkpoint，中断后可以从上次位置继续，不用重新处理整个视频。这个功能在处理长视频（1-2 小时）时非常有用。
+
+### Phase 7: 批量处理与质量验证（2026-05）
+
+单个视频能跑通后，开始批量处理崩坏3舰长线的全部 7 个视频（第一节、第八节、第十七节、第十八节 3 部分、第十八节支线、第十九节）。
+
+**批量处理脚本**（`process_all_videos.py`）：遍历 `/data2/training_data/` 下的所有视频文件，根据文件名匹配对应的 per-episode YAML 配置（`yuexia_ep01_roi.yaml` 等），依次调用 unified_pipeline 处理。
+
+**质量评估**：处理完成后，手工抽查了约 200 个事件（每个视频抽 30 个），评估截断率、文本可读性、说话人识别率。最终结果：
+- 截断率 <0.2%（目标 <5%）✓
+- 文本可读性 3.5-4/5（通顺可读）✓
+- 说话人识别率 73-93%（可用）✓
+- OCR 后缀噪声已清理 ✓
+
+**输出格式**：每个视频生成三个文件：
+- `{video_name}_events.jsonl`（结构化事件数据，含时间戳、说话人、文本、置信度）
+- `{video_name}_dialogue.txt`（纯文本台本，格式：`[说话人] 对话内容`）
+- `event_XXXXXX/` 目录（每个事件的帧截图，用于复核）
+
+### 当前状态与未来方向
+
+OCR 对话提取管线已经完成并验证可用。接下来的工作是角色 Skill 生成部分——从提取的对话文本中分析角色设定（Story）和人格特征（Persona），生成可对话的角色扮演 Skill。这部分的框架已经搭好（`prompts/` 目录下的 analyzer 和 builder），但效果还需要调试。
+
+技术上还有一些可以改进的地方：
+- VLM 兜底：对于低置信度的 OCR 结果，调用多模态 API（GPT-4V/Claude 3.5 Sonnet）重新识别
+- 脚本匹配增强：如果有现成的游戏剧本，可以用模糊匹配把 OCR 结果和剧本对齐，提升准确率
+- 多作品批量管理：任务队列、进度追踪、质量报表
+
+但核心的 OCR 管线已经足够可靠，可以开始专注于角色蒸馏的部分了。
 
 ---
 

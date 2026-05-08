@@ -7,6 +7,7 @@ Handles speaker identification from name box OCR, including:
 - Special speaker detection (narrator, system, unknown)
 """
 
+import re
 from typing import Optional, Callable, Dict, List, Set
 from PIL import Image
 from tools.text_cleaning import clean_speaker_name
@@ -37,6 +38,8 @@ class SpeakerExtractor:
         special_speakers: Optional[Dict[str, str]] = None,
         speaker_aliases: Optional[Dict[str, List[str]]] = None,
         strict_whitelist: bool = False,
+        blank_speaker: str = "[旁白]",
+        unknown_speaker: str = "[未知]",
     ):
         """
         Initialize speaker extractor.
@@ -49,11 +52,15 @@ class SpeakerExtractor:
             speaker_aliases: 说话人别名映射，canonical name -> list of aliases
             strict_whitelist: 若为 True，只接受在已知说话人集合中匹配的名字，
                               不匹配则视为未识别，走继承机制
+            blank_speaker: 名字框为空且无可继承说话人时使用的默认值
+            unknown_speaker: ??? 类名字框映射到的说话人标签
         """
         self.ocr_func = ocr_func
         self.confidence_threshold = confidence_threshold
         self.inherit_speaker = inherit_speaker
         self.strict_whitelist = strict_whitelist
+        self.blank_speaker = blank_speaker
+        self.unknown_speaker = unknown_speaker
         self.special_speakers = special_speakers if special_speakers is not None else DEFAULT_SPECIAL_SPEAKERS.copy()
 
         # 构建 alias -> canonical 反向映射
@@ -117,6 +124,12 @@ class SpeakerExtractor:
         if not text or confidence < self.confidence_threshold:
             return self._try_inherit()
 
+        # 全问号 → 未知角色（兼容半角?和全角？的混合）
+        if re.fullmatch(r'[?？]+', text):
+            self._last_speaker = self.unknown_speaker
+            self._last_confidence = confidence
+            return (self.unknown_speaker, confidence)
+
         # strict_whitelist 模式：名字必须在已知说话人集合中
         if self.strict_whitelist and text not in self._known_speakers:
             # 尝试模糊匹配（允许 OCR 偏差 1 个字符的编辑距离）
@@ -163,10 +176,10 @@ class SpeakerExtractor:
         return False
 
     def _try_inherit(self) -> tuple[Optional[str], float]:
-        """尝试继承上一个说话人。"""
+        """尝试继承上一个说话人，无可继承时回退为旁白。"""
         if self.inherit_speaker and self._last_speaker is not None:
             return (self._last_speaker, self._last_confidence)
-        return (None, 0.0)
+        return (self.blank_speaker, 0.0)
 
     def reset(self):
         """清除说话人状态，用于切换视频时调用。"""
