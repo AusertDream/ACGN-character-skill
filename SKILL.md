@@ -242,6 +242,40 @@ python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
 - ROI 配置不匹配：重新查看截图调整 ROI 坐标
 - 或改用方式 B/C
 
+**A4. 文本质量检查**
+
+OCR 提取完成后，先将 JSONL 转为纯文本台本：
+```bash
+python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
+```
+
+然后用 `Agent` 工具召唤一个 subagent 对产出的纯文本台本做语义级别的质量检查。subagent 的任务 prompt 如下（根据实际文件路径替换）：
+
+```
+读取以下纯文本台本文件，对内容做语义级别的质量检查：
+{逐个列出所有 .txt 文件的路径}
+
+检查以下几类问题：
+
+1. 乱码：明显不是中文/日文的无意义字符串，如 "EKR"、"Ta]"、"OAEE" 混在正文里
+2. OCR 残留噪声：句末或句中插入的无关短字符，如 "一 享"、"- 中"、"福"、"七" 等单字噪声
+3. 截断：明显不完整的句子（句子突然中断，没有标点结尾）
+4. 重复：连续两条完全相同或高度相似的对话
+5. 说话人异常：说话人字段是乱码或明显不合理的内容
+
+对于乱码和 OCR 残留噪声这类一眼就能确认是错误的问题，直接在文件中删除或修正。
+对于截断、重复、说话人异常这类需要上下文判断的问题，只记录不修改。
+
+最后输出一份质量报告，包含：
+- 总行数
+- 各类问题的数量统计
+- 已自动修正的条目列表（修正前 → 修正后）
+- 需要人工确认的条目列表（附行号和原因）
+- 整体质量评分（1-5 分）和简要评价
+```
+
+收到 subagent 的质量报告后，向用户展示报告摘要。如果整体质量评分 ≥ 3，继续进入 Step 3；如果评分 < 3，建议用户检查 OCR 配置或提供更好的视频源。
+
 ---
 
 #### 方式 B：上传文本文件
@@ -647,6 +681,40 @@ If OCR extraction fails, common reasons:
 - Missing PaddleOCR / PaddlePaddle: prompt user to install
 - ROI config mismatch: re-examine screenshots and adjust ROI coordinates
 - Or switch to Option B/C
+
+**A4. Text Quality Check**
+
+After OCR extraction, first convert JSONL to plain text transcripts:
+```bash
+python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
+```
+
+Then use the `Agent` tool to spawn a subagent for semantic-level quality checking of the produced plain text transcripts. The subagent task prompt should be as follows (replace file paths accordingly):
+
+```
+Read the following plain text transcript files and perform a semantic-level quality check:
+{list all .txt file paths}
+
+Check for these categories of issues:
+
+1. Garbled text: meaningless non-CJK character strings like "EKR", "Ta]", "OAEE" mixed into the body text
+2. OCR residual noise: irrelevant short characters inserted at the end or middle of sentences, such as "享", "福", "七", "- 中" etc.
+3. Truncation: obviously incomplete sentences (abruptly cut off, no ending punctuation)
+4. Duplicates: consecutive identical or highly similar dialogue lines
+5. Speaker anomalies: speaker field contains garbled text or clearly unreasonable content
+
+For garbled text and OCR residual noise — issues that are obviously wrong at a glance — directly delete or fix them in the files.
+For truncation, duplicates, and speaker anomalies — issues requiring contextual judgment — only log them, do not modify.
+
+Output a quality report containing:
+- Total line count
+- Count of each issue category
+- List of auto-corrected entries (before → after)
+- List of entries requiring manual confirmation (with line numbers and reasons)
+- Overall quality score (1-5) with a brief assessment
+```
+
+After receiving the subagent's quality report, show the report summary to the user. If the overall quality score is ≥ 3, proceed to Step 3. If the score is < 3, suggest the user check the OCR configuration or provide better video sources.
 
 ---
 
