@@ -5,13 +5,45 @@
 > *"吸血鬼不信神，也不信命运，但像这样出现在我面前的你，一定是我遇到过的最大的奇迹。"*
 
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://claude.ai/code)
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://python.org)
-[![PaddleOCR](https://img.shields.io/badge/PaddleOCR-OCR%20Pipeline-orange)](https://github.com/PaddlePaddle/PaddleOCR)
+[![Python 3.10](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://python.org)
+[![PaddleOCR](https://img.shields.io/badge/PaddleOCR-OCR%20Engine-orange)](https://github.com/PaddlePaddle/PaddleOCR)
+[![PyAV](https://img.shields.io/badge/PyAV-Video%20Processing-red)](https://github.com/PyAV-Org/PyAV)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+[![Game](https://img.shields.io/badge/Game-OCR%20Pipeline-brightgreen)](SKILL.md)
+[![Novel](https://img.shields.io/badge/Novel-EPUB%20Reader-brightgreen)](tools/epub_reader.py)
+[![Anime](https://img.shields.io/badge/Anime-VLM%20Extract-yellow)](SKILL.md)
+[![Comic](https://img.shields.io/badge/Comic-VLM%20Extract-yellow)](SKILL.md)
 
 ![立绘图](imgs/立绘图.png)
 
+<br>
+
+<table>
+<tr><td align="left">
+
+🎮 &nbsp;你喜欢的游戏角色，剧情读完就沉入记忆深处，再也无法重温和她对话的感觉？<br>
+📖 &nbsp;你追了几十万字的轻小说，合上书后只剩模糊的印象，想和角色聊聊却无从开口？<br>
+📺 &nbsp;你看完一部番剧，想知道如果是那个角色，面对你的问题会怎么回答？
+
+</td></tr>
+</table>
+
+### 把TA带到这个世界上来。
+
+从游戏录屏、小说文本、动画视频、漫画图片中<br>
+提取角色的故事、关系和人格<br>
+生成一个**用TA的语气说话、以TA的方式思考、带着TA的情感回应**的角色扮演 Skill
+
+**原作素材 + 你的描述 → 一个真正像TA的 AI 角色**
+
+<br>
+
+[简介](#简介) · [安装](#安装与使用) · [能力](#当前能力) · [效果示例](#实际效果) · [架构](#架构说明) · [数据来源](#数据来源) · [开发历程](#开发历程)
+
 </div>
+
+---
 
 ## 简介
 
@@ -35,6 +67,8 @@ ACGN-character-skill 是一个 Claude Code Skill，用于将 ACGN（Anime / Comi
 
 ## 安装与使用
 
+### 安装 Skill
+
 ```bash
 # 安装角色蒸馏工具
 npx skills add AusertDream/ACGN-character-skill
@@ -48,6 +82,33 @@ npx skills add AusertDream/ACGN-character-skill
 /ACGN-character          # 创建新角色或与已有角色对话
 /ACGN-character yuexia   # 直接进入月下角色扮演模式
 ```
+
+### Python 环境安装（OCR 管线）
+
+如果需要使用 Game / Visual Novel 的 OCR 对话提取功能，需要配置 Python 环境。Novel / Anime / Comic 方式不需要本地 Python 环境。
+
+```bash
+# 1. 创建 conda 环境（Python 3.10）
+conda create -n paddleocr python=3.10 -y
+conda activate paddleocr
+
+# 2. 安装 PaddlePaddle GPU 版（根据 CUDA 版本选择）
+# CUDA 11.8
+pip install paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+# CUDA 12.6
+pip install paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+# 仅 CPU（无 GPU）
+pip install paddlepaddle==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+
+# 3. 安装项目依赖
+pip install -r requirements.txt
+
+# 4. 验证安装
+python -c "import paddleocr; print('PaddleOCR:', paddleocr.__version__)"
+python -c "import av; print('PyAV:', av.__version__)"
+```
+
+PaddlePaddle 的安装命令因 CUDA 版本而异，完整的安装矩阵参考 [PaddlePaddle 官方安装指南](https://www.paddlepaddle.org.cn/install/quick)。
 
 ---
 

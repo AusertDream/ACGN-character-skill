@@ -1,5 +1,6 @@
 # ACGN-character-skill OCR dialogue extraction pipeline
 # Python 3.10+
+# PaddlePaddle GPU 需要单独安装，参考 README 中的安装说明
 
 # Core dependencies
 Pillow>=10.0
