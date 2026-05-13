@@ -53,39 +53,75 @@ npx skills add AusertDream/ACGN-character-skill
 
 ## 当前能力
 
-### 视频对话提取管线（Game / Visual Novel）
+### 整体流程
+
+整个 Skill 的工作流程分为三个阶段：
+
+```
+阶段一：数据提取
+  Game 视频 ──→ OCR 管线 ──→ 纯文本台本
+  Novel EPUB ──→ epub_reader ──→ 纯文本
+  Anime 视频 ──→ 切帧 + VLM ──→ 纯文本台本
+  Comic 图片 ──→ VLM ──→ 纯文本台本
+  纯文本/PDF ──→ 直接读取
+
+阶段二：角色分析（三条线并行）
+  纯文本 ──→ 故事分析 ──→ story.md（完整记忆库）
+                        ──→ story_summary.md（故事概要）
+         ──→ 关系分析 ──→ relationships.md（人物关系）
+         ──→ 人格分析 ──→ persona.md（五层人格）
+
+阶段三：组装与质量检查
+  story_summary + relationships + persona ──→ SKILL.md（角色扮演 prompt）
+  subagent 语义质量检查 ──→ 自动修正乱码/噪声 + 人工确认报告
+```
+
+触发 `/ACGN-character` 后，Skill 会引导用户完成以上流程。传入已有角色名（如 `/ACGN-character yuexia`）则直接进入角色扮演模式。
+
+### 数据提取模块
+
+#### Game / Visual Novel — OCR 对话提取管线
 
 统一端到端管线：`Video → FrameExtractor → BatchOCR → PostMerge → SpeakerDenoiser → TextCorrector → JSONL + TXT`
 
-核心技术包括：自适应状态机（增长率追踪 + MAD skip + Levenshtein 停时判据）正确处理打字机效果；手工 ROI 标注网页工具；checkpoint/resume 断点续传；说话人识别（空白→旁白，???→未知角色）和 OCR 噪声去噪；正则 + 可选 LLM 双层纠错。
-
-运行方式（需先 `conda activate paddleocr`，GPU 通过 `CUDA_VISIBLE_DEVICES` 指定）：
+核心技术包括：自适应状态机（增长率追踪 + MAD skip + Levenshtein 停时判据）正确处理打字机效果；手工 ROI 标注网页工具（`roi_annotator.py`）；checkpoint/resume 断点续传；说话人识别（空白→旁白，???→未知角色）和 OCR 噪声去噪；正则 + 可选 LLM 双层纠错。
 
 ```bash
-# 单个视频
+# 单个视频（需先 conda activate paddleocr）
 CUDA_VISIBLE_DEVICES=0 python -m tools.unified_pipeline "video.mp4" --config tools/configs/config.yaml
 
 # 批量处理
 CUDA_VISIBLE_DEVICES=0 python -m tools.process_all_videos
 
-# 手工 ROI 标注
+# 手工 ROI 标注（不需要 GPU）
 python -m tools.roi_annotator --port 11451
 ```
 
-### 小说文本提取（Novel）
+#### Novel — 文本提取
+
+EPUB 文件通过 `epub_reader.py` 解压提取纯文本，PDF 和 TXT/MD 文件直接读取。
 
 ```bash
-# EPUB 提取纯文本
 python -m tools.epub_reader "novel.epub" --output "output.txt"
 ```
 
-PDF 和 TXT/MD 文件由 Claude 的 Read 工具直接读取，无需额外处理。
+#### Anime / Comic — VLM 视觉理解提取（实验性）
 
-### 角色分析与生成
+动画视频按固定间隔切帧，漫画图片按阅读顺序排列，然后召唤 subagent 调用视觉理解模型逐批提取对话文字和场景描写。token 消耗极大，效果尚未充分验证，仅作保底方案。
 
-从提取的文本中按三条线并行分析：故事时间线（Story）、人物关系（Relationships）、五层人格（Persona），生成结构化的角色扮演 prompt。支持增量更新（追加新材料后 merge）和对话纠正（角色扮演中说"她不会这样"即可触发修正）。
+### 角色分析与生成模块
 
-### 生成的角色扮演 prompt 结构
+数据提取完成后，召唤 subagent 对文本做语义质量检查（自动修正乱码和 OCR 噪声，记录需人工确认的问题），通过后进入角色分析。三条分析线可以并行执行：
+
+**故事分析**：按时间线梳理角色的完整人生经历，生成 story.md（完整记忆库，角色扮演时按需检索）和 story_summary.md（500-1000 字概要，注入 prompt）。
+
+**关系分析**：提取所有与目标角色有交集的角色，记录每段关系的性质、发展过程和核心情感，生成 relationships.md（注入 prompt）。
+
+**人格分析**：提取角色的表达风格、情感模式、行为准则，按 Layer 0-5 六层结构生成可执行的行为指令 persona.md（注入 prompt）。
+
+分析结果组装为最终的角色扮演 SKILL.md，支持增量更新（追加新材料后 merge）和对话纠正（角色扮演中说"她不会这样"即可触发修正）。
+
+### 角色扮演加载策略
 
 | 部分 | 内容 | 加载方式 |
 |:---|:---|:---|
