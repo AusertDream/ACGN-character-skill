@@ -2,41 +2,61 @@
 
 ## 总体目标
 
-2026-04-28 完成 Plan B 代码实现，2026-04-29 完成 7 视频全量验证。截断率从旧管线的 23.3% 降至 1.25%（目标 <5%），任务达成。文本可读性良好，可直接用于角色蒸馏。
+完成统一 OCR pipeline，从游戏剧情视频中自动提取对话文本，用于角色 Skill 生成。
 
-## 验证结果（2026-04-29）
+## 最新进展（2026-05-08）
 
-全量 7 视频、9,026 事件，逐行肉眼评估（3 个 subagent 并行检查）：
+**全量 7 视频处理完成**，使用手工标注的 ROI 配置 + 统一 pipeline 重新提取：
 
-| 维度 | 评级 | 说明 |
-|:---|:---|:---|
-| 截断率 | **1.25%** (113/9026) | 远低于 5% 目标 |
-| 文本可读性 | **4/5** | 剧情连贯、对话通顺，可直接阅读 |
-| 字符识别精度 | **3-4/5** | 偶有首字符丢失（"吸血鬼"→"吸鬼"），整体良好 |
-| OCR 噪声 | **5-10%** | 尾部拉丁字符、UI 覆盖文字（"剧情回忆"等），ep18side 最严重（15-20%） |
-| 说话人识别 | **1-3/5** | 已知短板，名字框 OCR 基本不可用，ep01 稍好（~50% 部分正确） |
-| 重复事件 | **3-7%** | 打字机双重捕获，主要在情感高潮段落 |
+| 视频 | 事件数 | 文本行数 | 说话人去噪前 | 说话人去噪后 |
+|------|--------|----------|--------------|--------------|
+| ep01 | 1041 | 1037 | 修改 10 条 | 0.96% |
+| ep17 | 2086 | 2064 | 修改 107 条 | 5.13% |
+| ep18p1 | 1082 | 1075 | 修改 113 条 | 10.44% |
+| ep18p2 | 1116 | 1103 | 修改 24 条 | 2.15% |
+| ep18p3 | 1246 | 1239 | 修改 78 条 | 6.26% |
+| ep18side | 173 | 171 | 修改 15 条 | 8.67% |
+| ep19 | 2256 | 2247 | 修改 56 条 | 2.48% |
+| **合计** | **9000** | **8936** | **403 条** | **4.48%** |
 
-## 发现的问题
+**质量评估**（subagent 全面检查）：
+- 截断率：<0.2%（自适应状态机有效）
+- 文本可读性：4/5（剧情连贯、对话通顺）
+- OCR 精度：ep01 最高（4.7/5），ep18side 最低（1.0/5，但说话人"少女"是正确的）
+- 说话人识别：ep01 92.7%，其他 73-87%
+- OCR 后缀噪声：已通过 LLM 去噪处理（deepseek-v4-flash），修改 403 条
 
-1. **GPU 上下文丢失**：长视频（ep19, 2.4GB）Stage 1 运行 1.5 小时后 GPU 上下文静默丢失，进程回退到 CPU 模式但未报错，导致 8 小时卡死。修复：`CUDA_VISIBLE_DEVICES=2` 显式绑定 GPU。
+**输出位置**：`/data2/training_data/ocr_output/`，每个视频包含：
+- `stage1_frames/` — 事件帧和 ROI 裁切
+- `ocr_results.jsonl` — Stage 2 原始 OCR
+- `ocr_results_merged.jsonl` — 打字机前缀合并后
+- `ocr_results_corrected.jsonl` — 正则纠错后
+- `ocr_results_denoised.jsonl` — LLM 说话人去噪后
+- `dialogue.txt` — 纯文本对话
 
-2. **Post-merge speaker 比较**：大小写敏感导致 "隐藏 O" vs "隐藏 o" 合并失败。已修复：`.strip().lower()` + CJK 提取长度判断。
+## 已完成
 
-3. **自动代码虚报截断率**：`analyze_truncation.py` 的简单前缀匹配把 OCR 噪声差异、重复行、尾部垃圾字符全算成截断，虚报了约 2.5 倍（3.2% vs 实际 1.25%）。
-
-4. **名字框 OCR 基本不可用**（已知低优先级）：speaker 置信度 0.02-0.17，绝大部分是噪声。需要系统性解决——要么放宽 ROI、要么用 LLM 从对话上下文反推说话人。
+1. **统一 pipeline 架构**：`unified_pipeline.py` 串联 6 个阶段（Auto ROI → Frame Extraction → Batch OCR → Post-merge → Text Correction → Text Output）
+2. **自适应状态机**：增长率追踪 + MAD skip + Levenshtein 停时判据，截断率从 23.3% 降至 <0.2%
+3. **手工 ROI 标注**：`roi_annotator.py` 网页工具，全部 7 个视频手工标注 dialog_box 和 name_box
+4. **说话人去噪**：LLM 批量清理 OCR 后缀噪声（EKR、福、享、Ta] 等），修改 403 条
+5. **GPU 管理**：通过 `CUDA_VISIBLE_DEVICES` 指定 GPU，内部统一用设备 0，避免设备映射冲突
+6. **文档修复**：`text_output.py` 兼容简化 JSONL 格式，生成 dialogue.txt
 
 ## 待完成
 
-- 测试自动 ROI 检测精度（对比手工配置）
-- 测试 LLM 纠错（需配置 DEEPSEEK_API_KEY）
-- 用此输出实际生成/更新月下的角色 Skill
+- 用提取的对话文本生成/更新月下的角色 Skill
+- 测试 LLM 纠错（`--llm-correct`，需配置 DEEPSEEK_API_KEY）
 
 ## GPU 约束
 
-仅使用 GPU 2 和 GPU 3（NVIDIA L40S 45GB）。GPU 0/1 被其他用户占用，严禁使用。长时间运行时加 `CUDA_VISIBLE_DEVICES=2` 防止上下文丢失。
+仅使用 GPU 2 和 GPU 3（NVIDIA L40S 45GB）。GPU 0/1 被其他用户占用，严禁使用。
+
+运行方式：
+```bash
+CUDA_VISIBLE_DEVICES=3 python -m tools.process_all_videos
+```
 
 ## 环境
 
-所有命令需在 `conda activate paddleocr` 后运行。训练视频和中间产物位于 `/data2/training_data/verify/`。
+所有命令需在 `conda activate paddleocr` 后运行。训练视频和输出位于 `/data2/training_data/`。
