@@ -7,139 +7,33 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://claude.ai/code)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://python.org)
 [![PaddleOCR](https://img.shields.io/badge/PaddleOCR-OCR%20Pipeline-orange)](https://github.com/PaddlePaddle/PaddleOCR)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ![立绘图](imgs/立绘图.png)
 
-
-
-<br>
-
-将虚构角色蒸馏成可对话的 AI Skill。<br>
-从 ACGN 游戏剧情视频中提取角色的故事设定与人格特征，<br>
-生成一个**用她的语气说话、以她的方式思考、带着她的情感回应**的角色扮演 Skill。<br>
-内置 OCR 对话提取工具，支持无语音剧情视频的文本提取。
-
-本项目以崩坏3舰长线角色「月下」为首个实例，<br>
-架构参考 [colleague-skill](https://github.com/titanwings/colleague-skill) 的二层蒸馏方法，<br>
-将「工作能力 + 人格」适配为「角色设定 + 人格」。
-
 </div>
 
-**OCR 对话提取管线现已完成统一架构重构（2026-05-08），截断率 <0.2%（目标 <5%），文本可读性良好，可直接用于角色蒸馏。说话人 OCR 后缀噪声已通过 LLM 批量去噪处理。**
+## 简介
 
-## 什么是 Skill
+ACGN-character-skill 是一个 Claude Code Skill，用于将 ACGN（Anime / Comic / Game / Novel）领域的虚构角色"蒸馏"为可对话的角色扮演 prompt。它从原作素材中提取角色的故事经历、人物关系和人格特征，生成一套结构化的角色扮演指令，让 Claude 能够以该角色的身份、语气和思维方式进行对话。
 
-Skill 是 Claude Code 的扩展能力单元，以一个包含 `SKILL.md` 的 Git 仓库形式存在。安装到 Claude Code 后，可以通过斜杠命令（如 `/ACGN-character`）触发。当用户输入对应命令时，Claude 会读取 SKILL.md 中定义的指令、工具使用规则和工作流程，按照其中的步骤自动执行任务。
+项目覆盖 ACGN 四种媒体类型，针对不同的输入数据有不同的处理方式：
 
-本项目是一个**角色蒸馏工具 Skill**。它从游戏视频中提取对话，分析角色的故事设定和人格特征，生成结构化的角色扮演 prompt。这些 prompt 让 Claude 能够以该角色的身份、语气、思维方式进行对话。
+**Game / Visual Novel（游戏 / 视觉小说）** — 输入通常是剧情录屏视频。通过内置的 OCR 对话提取管线处理：手工标注对话框和名字框的 ROI 坐标，然后用自适应状态机逐帧检测对话事件，PaddleOCR 批量识别文字，后置合并处理打字机效果碎片，最终输出带说话人标注的纯文本台本。这是目前最成熟的管线，截断率 <0.2%。
 
-## 这个项目做了什么
+**Novel（小说 / 轻小说）** — 输入通常是 EPUB 电子书文件，也可以是 PDF 或纯文本。EPUB 文件通过内置的 `epub_reader.py` 解压并提取纯文本内容，PDF 和 TXT/MD 文件直接读取。提取出的文本作为原材料进入角色分析流程。
 
-colleague-skill 的核心思路是将一个真实同事的专业能力和人格特征分别提取、结构化，然后合并为一套可执行的角色扮演指令。本项目将这一方法迁移到虚构角色领域：用 OCR 对话提取替代聊天记录采集，用角色设定（Story）替代工作能力（Work），用适配后的5层人格模型捕捉角色的说话方式、情感模式和行为准则。
+**Anime（动画）** — 输入是动画视频文件。将视频按固定间隔切分为帧图片，然后召唤 subagent 调用视觉理解模型（VLM）逐批识别每帧中的字幕文字、说话人和场景描写。
 
-整个流程：游戏剧情视频 → OCR 对话提取 → 角色信息提取 → 结构化生成 → 角色扮演 prompt → Claude 以角色身份对话。
+**Comic（漫画）** — 输入是漫画图片文件。将图片按阅读顺序排列，召唤 subagent 调用 VLM 逐页提取对话框文字、说话人和场景描写。
 
----
+> **⚠️ Anime / Comic 方式警告**：动画和漫画的 VLM 提取方案需要将大量图片帧逐批送入视觉理解模型，**token 消耗极大**（一部 24 分钟动画约产生 300 帧截图，每帧消耗数千 token），且**实际提取效果尚未经过充分验证**。目前仅作为没有其他数据来源（字幕文件、wiki、剧情文档）时的最终保底方案。建议优先寻找文字形式的原材料。
 
-## 当前能力
-
-### 视频对话提取管线（tools/unified_pipeline.py）
-
-统一端到端管线：`Video → FrameExtractor → BatchOCR → PostMerge → SpeakerDenoiser → TextCorrector → JSONL + TXT`
-
-- **自适应状态机**：增长率追踪 + 像素差分预触发（MAD skip）+ Levenshtein 停时判据，正确处理打字机效果
-- **手工 ROI 标注**：网页工具 `roi_annotator.py`，可视化标注对话框和名字框坐标（已放弃自动检测方案）
-- **Checkpoint/Resume**：中断后可从上次位置继续，每完成一个事件写检查点
-- **说话人识别**：
-  - 空白名字框 → 旁白
-  - 全问号名字框（???）→ 未知角色
-  - 正常名字 → 保持原样（不做归一化）
-- **说话人去噪**：LLM 批量清理 OCR 后缀噪声（deepseek-v4-flash），修正率 4.48%
-- **后置纠错流水线**：正则规则 + 可选 LLM 纠错（deepseek-v4-flash/pro）
-- **结构化输出**：层级目录 `event_XXXXXX/{frame.png, dialog.png, name.png}` + JSONL + 纯文本台本
-
-**7 视频全量验证结果（崩坏3舰长线，9,000 事件）：**
-
-| 指标 | 值 | 目标 | 状态 |
-|:---|:---|:---|:---|
-| 截断率（人工评估） | <0.2% | <5% | PASS |
-| 文本可读性 | 3.5-4/5 | 通顺可读 | PASS |
-| 说话人识别率 | 73-93% | 可用 | PASS |
-| OCR 后缀噪声 | 已清理 | — | PASS |
-
-### 角色 Skill 创建器（SKILL.md）
-
-- 从 OCR 提取的对话文本提取角色设定（Story）和五层人格（Persona）
-- 生成结构化的角色扮演 prompt，让 Claude 以角色身份对话
-- 支持增量更新和对话纠正
-
----
-
-## 支持的数据来源
-
-| 类型 | 方式 | 状态 |
-|:---|:---|:---|
-| **Game / Visual Novel** | OCR 对话提取管线（PaddleOCR + 自适应状态机） | 已完成，截断率 <0.2% |
-| **Novel** | EPUB 解压提取纯文本（epub_reader.py），PDF/TXT 直接读取 | 已完成 |
-| **Anime** | 视频切帧 → VLM 视觉理解逐帧提取对话 | 实验性 |
-| **Comic** | 漫画图片 → VLM 视觉理解逐页提取对话框 | 实验性 |
-
-> **⚠️ Anime / Comic 方式警告**：动画和漫画的 VLM 提取方案需要将大量图片帧逐批送入视觉理解模型（Claude / GPT-4V 等），**token 消耗极大**（一部 24 分钟动画约产生 300 帧截图，每帧消耗数千 token），且**实际提取效果尚未经过充分验证**。目前仅作为没有其他数据来源（字幕文件、wiki、剧情文档）时的最终保底方案。建议优先寻找文字形式的原材料。
-
----
-
-## 计划中的能力
-
-### 近期
-- **VLM 兜底**：低置信度事件调用多模态 API（需配置 API key），处理半透明/特效字幕等难例
-
-### 长期
-- **多作品批量管理**：任务队列、进度追踪、质量报表
-- **脚本匹配增强**：若有现成剧本，OCR 结果与脚本模糊匹配提纯
-
----
-
-## 项目结构
-
-```
-ACGN-character-skill/
-├── SKILL.md                    # 角色 Skill 创建器入口
-├── prompts/                    # Prompt 模板（story/persona analyzer & builder）
-├── tools/
-│   ├── unified_pipeline.py     #   统一 CLI 入口，串联全流程
-│   ├── frame_extractor.py      #   Stage 1 事件检测 + 帧保存（checkpoint/resume）
-│   ├── batch_ocr.py            #   Stage 2 批量 OCR 处理器
-│   ├── event_detector.py       #   自适应状态机（增长率+MAD skip+Levenshtein）
-│   ├── roi_annotator.py        #   网页版手工 ROI 标注工具
-│   ├── post_merge.py           #   后置前缀合并 + 战斗文字过滤
-│   ├── speaker_denoiser.py     #   说话人 OCR 噪声清洗
-│   ├── llm_corrector.py        #   LLM OCR 纠错（deepseek-v4-flash/pro，可选）
-│   ├── ocr_engines.py          #   OCR 引擎工厂（PaddleOCR/EasyOCR/RapidOCR）
-│   ├── ocr_fusion.py           #   多引擎 OCR 融合策略
-│   ├── ocr_postprocess.py      #   正则纠错规则
-│   ├── output_schema.py        #   统一输出格式定义
-│   ├── metrics.py              #   性能指标追踪
-│   ├── preprocessing.py        #   图像预处理 profile
-│   ├── speaker_extractor.py    #   说话人识别（空白→旁白，???→未知角色）
-│   ├── video_processor.py      #   视频帧提取与 ROI 裁剪
-│   ├── work_config.py          #   配置系统
-│   └── configs/                #   每部作品的 ROI 配置文件
-├── characters/
-│   └── yuexia/                 #   月下的生成产物
-└── benchmark/                  #   评估数据与脚本
-```
-
----
-
-## 架构说明
-
-本项目的架构参考了 [colleague-skill](https://github.com/titanwings/colleague-skill) 的二层蒸馏方法。colleague-skill 将真实同事拆分为「工作能力」和「人格特征」两个维度分别提取，本项目将同样的思路迁移到虚构角色领域，用「角色设定（Story）」替代工作能力，用适配后的5层人格模型替代原版的职场人格结构。数据来源从飞书/钉钉聊天记录替换为游戏剧情视频的 OCR 对话提取。
+无论哪种输入方式，提取出的文本都会经过统一的角色分析流程：从文本中梳理角色的完整故事时间线（story.md，作为检索记忆库）、提炼故事概要（story_summary.md，注入 prompt）、提取人物关系（relationships.md，注入 prompt）、分析五层人格特征（persona.md，注入 prompt），最终组装为一个完整的角色扮演 SKILL.md。
 
 ---
 
 ## 安装与使用
-
-### 安装 Skill
 
 ```bash
 # 安装角色蒸馏工具
@@ -155,20 +49,63 @@ npx skills add AusertDream/ACGN-character-skill
 
 ---
 
-## 生成的角色扮演 prompt 结构
+## 当前能力
 
-月下的最终角色扮演 prompt（`characters/yuexia/SKILL.md`）由两部分组成：
+### 视频对话提取管线（Game / Visual Novel）
 
-| 部分                | 内容                                       |
-| ----------------- | ---------------------------------------- |
-| **Part A — 角色设定** | 世界观、角色身份与能力、故事线（按章节）、人物关系、知识库（知道/不知道的事实） |
-| **Part B — 人格**   | Layer 0 核心规则 → Layer 1 身份认知 → Layer 2 表达风格 → Layer 3 情感与决策 → Layer 4 关系行为 → Layer 5 边界与禁区 |
+统一端到端管线：`Video → FrameExtractor → BatchOCR → PostMerge → SpeakerDenoiser → TextCorrector → JSONL + TXT`
 
-运行规则：以月下第一人称对话 → Persona 决定当前态度和情绪 → Story 确认认知范围 → 始终保持 Layer 2 的表达风格 → Layer 0 不可违背。
+核心技术包括：自适应状态机（增长率追踪 + MAD skip + Levenshtein 停时判据）正确处理打字机效果；手工 ROI 标注网页工具；checkpoint/resume 断点续传；说话人识别（空白→旁白，???→未知角色）和 OCR 噪声去噪；正则 + 可选 LLM 双层纠错。
+
+运行方式（需先 `conda activate paddleocr`，GPU 通过 `CUDA_VISIBLE_DEVICES` 指定）：
+
+```bash
+# 单个视频
+CUDA_VISIBLE_DEVICES=0 python -m tools.unified_pipeline "video.mp4" --config tools/configs/config.yaml
+
+# 批量处理
+CUDA_VISIBLE_DEVICES=0 python -m tools.process_all_videos
+
+# 手工 ROI 标注
+python -m tools.roi_annotator --port 11451
+```
+
+### 小说文本提取（Novel）
+
+```bash
+# EPUB 提取纯文本
+python -m tools.epub_reader "novel.epub" --output "output.txt"
+```
+
+PDF 和 TXT/MD 文件由 Claude 的 Read 工具直接读取，无需额外处理。
+
+### 角色分析与生成
+
+从提取的文本中按三条线并行分析：故事时间线（Story）、人物关系（Relationships）、五层人格（Persona），生成结构化的角色扮演 prompt。支持增量更新（追加新材料后 merge）和对话纠正（角色扮演中说"她不会这样"即可触发修正）。
+
+### 生成的角色扮演 prompt 结构
+
+| 部分 | 内容 | 加载方式 |
+|:---|:---|:---|
+| **Part A — 故事概要** | 角色的核心经历脉络（500-1000字） | prompt 注入 |
+| **Part B — 人物关系** | 与所有重要角色的关系描述 | prompt 注入 |
+| **Part C — 人格** | Layer 0-5 六层行为指令 | prompt 注入 |
+| **完整故事** | 详细的时间线记忆库 | 按需用 Read 工具检索 |
 
 ---
 
-## 效果示例
+## 实际效果
+
+### OCR 管线验证结果（崩坏3舰长线，7 视频，9,000 事件）
+
+| 指标 | 值 | 目标 | 状态 |
+|:---|:---|:---|:---|
+| 截断率（人工评估） | <0.2% | <5% | PASS |
+| 文本可读性 | 3.5-4/5 | 通顺可读 | PASS |
+| 说话人识别率 | 73-93% | 可用 | PASS |
+| OCR 后缀噪声 | 已清理 | — | PASS |
+
+### 角色扮演效果示例（月下）
 
 > **日常对话**
 
@@ -205,54 +142,71 @@ npx skills add AusertDream/ACGN-character-skill
 
 ---
 
-## 数据来源
+## 项目结构
 
-本项目的训练数据来自崩坏3舰长线全剧情视频，涵盖以下章节：
-
-| 章节        | 标题       | 内容                 |
-| --------- | -------- | ------------------ |
-| 第一节       | 仲夏幻夜     | 月下与舰长的初遇           |
-| 第八节       | 星与你消失之日  | 圣贤王的棋局             |
-| 第十七节      | 在长梦弥散之前  | 因为语音内容较少，所以暂时没有    |
-| 第十八节（3部分） | 当红月落幕之后  | 同上，暂时没有这部分记忆       |
-| 第十八节支线    | 月下全回忆和彩蛋 | 月下的核心独白与记忆（信息密度最高） |
-| 第十九节      | 牧场奇谭     | 日常生活与归宿            |
-
-所有章节均通过 OCR 对话提取管线处理，最终角色数据主要依据仲夏幻夜、月下回忆彩蛋、牧场奇谭三个章节生成，其余章节因角色出场有限仅作参考。
-
-视频来源：B站 UP主 [MC神神希](https://space.bilibili.com/666904408)
-
-Live2D 来源：B站 [支线路人A](https://space.bilibili.com/1152374880)
-
----
-
-## OCR 对话提取
-
-统一端到端管线：手工 ROI 标注 → 自适应状态机事件检测 → 批量 OCR → 后置合并 → 说话人去噪 → 文本纠错 → JSONL + 纯文本输出。
-
-运行方式（需先 `conda activate paddleocr`，GPU 通过 `CUDA_VISIBLE_DEVICES` 指定）：
-
-```bash
-# 单个视频（使用已有配置）
-CUDA_VISIBLE_DEVICES=0 python -m tools.unified_pipeline "video.mp4" --config tools/configs/yuexia_ep01_roi.yaml
-
-# 批量处理全部视频
-CUDA_VISIBLE_DEVICES=0 python -m tools.process_all_videos
-
-# 手工 ROI 标注（不需要 GPU）
-python -m tools.roi_annotator --port 11451
-# 浏览器打开 http://localhost:11451，画蓝色对话框和红色名字框，Ctrl+S 保存
+```
+ACGN-character-skill/
+├── SKILL.md                    # 角色蒸馏工具入口
+├── prompts/                    # Prompt 模板（story/persona analyzer & builder）
+├── tools/
+│   ├── unified_pipeline.py     #   Game OCR 统一管线入口
+│   ├── frame_extractor.py      #   Stage 1 事件检测 + 帧保存
+│   ├── batch_ocr.py            #   Stage 2 批量 OCR
+│   ├── event_detector.py       #   自适应状态机
+│   ├── roi_annotator.py        #   网页版手工 ROI 标注
+│   ├── epub_reader.py          #   EPUB 纯文本提取
+│   ├── post_merge.py           #   后置前缀合并 + 战斗文字过滤
+│   ├── speaker_denoiser.py     #   说话人 OCR 噪声清洗
+│   ├── speaker_extractor.py    #   说话人识别（空白→旁白，???→未知）
+│   ├── llm_corrector.py        #   LLM OCR 纠错（可选）
+│   ├── ocr_engines.py          #   OCR 引擎工厂
+│   ├── preprocessing.py        #   图像预处理 profile
+│   ├── work_config.py          #   配置系统
+│   └── configs/                #   每部作品的 ROI 配置文件
+├── characters/
+│   └── yuexia/                 #   月下角色扮演产物
+│       ├── SKILL.md            #     组装后的角色扮演 prompt
+│       ├── story.md            #     完整故事（检索记忆库）
+│       ├── story_summary.md    #     故事概要（prompt 注入）
+│       ├── relationships.md    #     人物关系（prompt 注入）
+│       └── persona.md          #     五层人格（prompt 注入）
+└── data/                       #   原材料文本（gitignored）
 ```
 
+### 架构说明
+
+角色蒸馏分为两个阶段。第一阶段是数据提取：根据输入媒体类型（Game 视频 / Novel 文本 / Anime 视频 / Comic 图片）用对应的管线将原作素材转换为纯文本台本。第二阶段是角色分析：从文本中按三条线并行分析——故事时间线梳理角色完整经历并形成记忆库、人物关系提取角色与所有相关角色的关系网络、人格分析提取角色的表达风格和行为模式。分析结果分别生成为独立文件，最终组装成一个角色扮演 SKILL.md。
+
+角色扮演时的加载策略是"prompt 注入 + 按需检索"：故事概要、人物关系和人格作为 prompt 常驻注入，让角色始终知道自己是谁、经历过什么、和谁有关系、如何说话；完整故事作为记忆库存储，当话题涉及具体事件细节时用 Read 工具检索对应章节，避免凭空编造。
+
 ---
 
-## 进化机制
+## 数据来源
 
-与 colleague-skill 一致，支持两种进化方式：
+ACGN 四种媒体类型对应不同的典型输入数据：
 
-**追加材料**：提供新的视频文件，通过 OCR 提取对话后自动分析增量内容并 merge 到 story.md 和 persona.md 中，不覆盖已有结论。
+| 类型 | 典型输入 | 推荐替代 |
+|:---|:---|:---|
+| **Anime（动画）** | 动画视频文件 | 字幕文件（.srt/.ass）、wiki、剧情文档 |
+| **Comic（漫画）** | 漫画图片 | 小说原作、wiki、剧情文档 |
+| **Game（游戏）** | 剧情录屏视频 | 游戏脚本、剧情文档 |
+| **Novel（小说）** | EPUB / PDF / TXT 文件 | 直接使用，无需替代 |
 
-**对话纠正**：在角色扮演过程中说「她不会这样说」「她应该是……」，系统会识别纠正意图，生成 Correction 记录写入对应文件，立即生效。
+所有类型都支持直接粘贴纯文本作为输入。如果能找到文字形式的原材料（剧情文档、wiki、字幕文件、小说原作），应优先使用，效果最好且成本最低。视频和图片的自动提取是在没有文字来源时的备选方案。
+
+### 示例：月下（崩坏3rd）
+
+本项目的首个实例是崩坏3舰长线角色「月下」。她的数据来源是 Game 类型——B站UP主 [MC神神希](https://space.bilibili.com/666904408) 发布的崩坏3舰长线全剧情合集视频，共 7 个视频，通过 OCR 管线提取了约 9,000 条对话事件。
+
+| 章节 | 标题 | 内容 |
+|:---|:---|:---|
+| 第一节 | 仲夏幻夜 | 月下与舰长的初遇 |
+| 第十七节 | 在长梦弥散之前 | 寻找月下的线索 |
+| 第十八节（3部分） | 当红月落幕之后 | 城堡对峙与告别 |
+| 第十八节支线 | 月下全回忆和彩蛋 | 月下的核心独白与记忆 |
+| 第十九节 | 牧场奇谭 | 日常生活与归宿 |
+
+Live2D 来源：B站 [支线路人A](https://space.bilibili.com/1152374880)
 
 ---
 
@@ -278,14 +232,7 @@ OCR 引擎选了 PaddleOCR（GPU 加速，中文识别准确），很快遇到�
 
 **说话人识别**（04-09, commit a3ab2e7）：除了对话内容，还需要识别是谁在说话。名字框的 OCR 结果经常是空的（游戏里很多对话不显示名字），所以加了"说话人继承"机制——如果当前帧名字框为空，就继承上一个已知的说话人。
 
-**打字机截断问题的持续调试**（04-11 ~ 04-23）：截断问题困扰了好几天。尝试过很多方案：
-
-- 增加稳定帧阈值（从 3 帧改到 5 帧，04-23, commit 5a63b4c）
-- 降低相似度阈值（从 0.6 降到 0.5）
-- 区分"经历过增长"和"从未增长"的事件，给前者更长的等待时间（post_growth_stable_threshold = 10）
-- 修复文本替换判断逻辑（04-24, commit 0686c7d）：之前用 SequenceMatcher 计算相似度，但"灼热的空"和"灼热的空气让肺部最后一丝生息也变得虚无"的相似度只有 0.21，会被误判为替换。改成先检查子串包含关系和前缀匹配，再用相似度兜底
-
-但这些调整都是治标不治本，截断率从最初的 23.3% 降到了 5% 左右，但还是不够理想。
+**打字机截断问题的持续调试**（04-11 ~ 04-23）：截断问题困扰了好几天。尝试过很多方案：增加稳定帧阈值（从 3 帧改到 5 帧）、降低相似度阈值（从 0.6 降到 0.5）、区分"经历过增长"和"从未增长"的事件给前者更长的等待时间、修复文本替换判断逻辑（之前用 SequenceMatcher 计算相似度，但"灼热的空"和"灼热的空气让肺部最后一丝生息也变得虚无"的相似度只有 0.21 会被误判为替换，改成先检查子串包含关系和前缀匹配再用相似度兜底）。这些调整都是治标不治本，截断率从最初的 23.3% 降到了 5% 左右，但还是不够理想。
 
 **后置合并方案**（04-12, commit 8762bc9, 200c791）：既然实时判断很难做到完美，那就在 OCR 完成后做后处理。`post_merge.py` 会扫描所有事件，找到"同一说话人 + 时间间隔 <5s + 前缀相似度 ≥0.65"的相邻事件，把它们合并成一个完整对话。这个方案把截断率降到了 1% 以下。
 
@@ -293,56 +240,19 @@ OCR 引擎选了 PaddleOCR（GPU 加速，中文识别准确），很快遇到�
 
 手工标注 ROI 很繁琐，每个视频都要打开网页工具画框。想过能不能自动检测？
 
-**自动检测方案**（04-21, commit d27fe0b, 86a6bb1）：`auto_roi.py` 的思路是：采样视频前 2 分钟约 40 帧，运行 PaddleOCR detection-only 模式（只检测文本框位置，不识别内容），收集所有检测框的 y 坐标，用 DBSCAN 聚类找到对话框区域（最下方的聚类）和名字框区域（对话框上方的聚类），输出标准 WorkConfig YAML。
+**自动检测方案**（04-21, commit d27fe0b, 86a6bb1）：`auto_roi.py` 的思路是：采样视频前 2 分钟约 40 帧，运行 PaddleOCR detection-only 模式（只检测文本框位置，不识别内容），收集所有检测框的 y 坐标，用 DBSCAN 聚类找到对话框区域和名字框区域，输出标准配置 YAML。
 
-**为什么放弃**：自动检测在理想情况下能工作，但实际视频里有太多干扰因素——战斗 HUD、特效字幕、半透明对话框、动态背景。DBSCAN 聚类经常把这些噪声也聚进来，导致 ROI 不准确。而且自动检测的结果需要人工验证（内置了 5 帧采样验证），验证失败还是要手工校准，反而增加了工作量。最终决定还是用手工标注，一次标好、长期可用，反而更可靠。
+**为什么放弃**：实际视频里有太多干扰因素——战斗 HUD、特效字幕、半透明对话框、动态背景。DBSCAN 聚类经常把这些噪声也聚进来，导致 ROI 不准确。而且自动检测的结果需要人工验证，验证失败还是要手工校准，反而增加了工作量。最终决定还是用手工标注，一次标好、长期可用，反而更可靠。
 
 ### Phase 4: 自适应状态机（04-29）
 
 后置合并虽然有效，但治标不治本。真正的解决方案是让状态机变得更聪明——不用固定阈值，而是根据文本增长速度动态调整等待时间。
 
-**增长率追踪**（04-29, commit 85e8849）：用滑动窗口（SMA(5)）计算每帧的字符增长速度 `delta_chars_per_frame`，通过 sigmoid 函数映射为连续的增长置信度 [0,1]，然后动态计算稳定阈值 = max(5, int(growth_confidence * 15))。打字速度快就少等，慢就多等。
+**增长率追踪**（04-29, commit 85e8849）：用滑动窗口（SMA(5)）计算每帧的字符增长速度，通过 sigmoid 函数映射为连续的增长置信度 [0,1]，然后动态计算稳定阈值。打字速度快就少等，慢就多等。**像素差分预触发（MAD skip）**减少了 30-40% 的 OCR 调用。**累积 Levenshtein 停时判据**处理了 OCR 抖动导致的微小字符变化。这三个机制组合后截断率降到了 <0.2%。同一个 commit 也完成了管线架构统一，一条命令完成全流程，支持断点续传。
 
-**像素差分预触发（MAD skip）**：活跃事件期间，计算当前帧与上一帧 ROI 的 Mean Absolute Difference。如果 MAD < 2%（画面几乎没变化），直接跳过 OCR，等同于空帧。这个优化减少了 30-40% 的 OCR 调用，大幅提升了处理速度。
+### Phase 5: 说话人去噪与批量验证（05-08）
 
-**累积 Levenshtein 停时判据**：用滑动窗口（size=3）累加编辑距离，只有当累积编辑距离 ≤2 且自适应阈值帧数已过，才最终确定事件。这个机制处理了 OCR 抖动导致的微小字符变化（比如"的"和"地"反复横跳）。
-
-这三个机制组合后，截断率降到了 <0.2%，终于达到了可用标准。同一个 commit 也完成了管线架构统一——把之前分散的 `dialogue_extractor.py`、`batch_ocr.py`、`post_merge.py`、`llm_corrector.py` 串联成 `unified_pipeline.py`，一条命令完成全流程，支持 checkpoint/resume 断点续传。
-
-### Phase 5: 说话人识别的噪声问题（05-08）
-
-名字框的 OCR 结果经常带有后缀噪声，比如"舰长EKR"、"姬子福"、"琪亚娜享"、"芽衣Ta]"。这些噪声来自 OCR 引擎把名字框边缘的装饰元素或背景纹理误识别为文字。
-
-**最初的方案**：在 `speaker_extractor.py` 里加了别名映射（speaker_aliases），手工维护一个"正确名字 → 可能的错误变体"的字典。但这个方案不可扩展——每次发现新的噪声模式都要手工添加规则。
-
-**去噪方案**（05-08, commit 84a773f）：写了 `speaker_denoiser.py`，用正则规则和上下文推断批量清理 OCR 结果。提供角色名单（舰长、姬子、琪亚娜、芽衣、布洛妮娅、德丽莎、符华、旁白、系统等），对每个 OCR 结果做后缀噪声去除、模糊匹配和上下文推断。处理了 9,000 个事件，修正了 403 个错误（4.48% 修正率）。
-
-**特殊说话人处理**：除了角色名字，还有两种特殊情况需要处理：
-- 空白名字框（OCR 返回空字符串或纯空格）→ 映射为"旁白"
-- 全是问号的名字框（"???"、"？？？"）→ 映射为"未知角色"
-
-这两个规则在 `speaker_extractor.py` 里实现，优先级高于去噪流程。
-
-### Phase 6: 批量处理与质量验证（05-08）
-
-单个视频能跑通后，批量处理崩坏3舰长线的全部 7 个视频（第一节、第十七节、第十八节 3 部分、第十八节支线、第十九节）。
-
-**质量评估**：处理完成后手工抽查，评估截断率、文本可读性、说话人识别率。最终结果：
-- 截断率 <0.2%（目标 <5%）✓
-- 文本可读性 3.5-4/5（通顺可读）✓
-- 说话人识别率 73-93%（可用）✓
-- OCR 后缀噪声已清理 ✓
-
-### 当前状态与未来方向
-
-OCR 对话提取管线已经完成并验证可用。接下来的工作是角色 Skill 生成部分——从提取的对话文本中分析角色设定（Story）和人格特征（Persona），生成角色扮演 prompt。这部分的框架已经搭好（`prompts/` 目录下的 analyzer 和 builder），但效果还需要调试。
-
-技术上还有一些可以改进的地方：
-- VLM 兜底：对于低置信度的 OCR 结果，调用多模态 API 重新识别
-- 脚本匹配增强：如果有现成的游戏剧本，可以用模糊匹配把 OCR 结果和剧本对齐，提升准确率
-- 多作品批量管理：任务队列、进度追踪、质量报表
-
-但核心的 OCR 管线已经足够可靠，可以开始专注于角色蒸馏的部分了。
+名字框 OCR 经常带有后缀噪声（"舰长EKR"、"姬子福"），写了 `speaker_denoiser.py` 用正则规则和上下文推断批量清理，处理 9,000 事件修正了 403 个错误（4.48% 修正率）。批量处理 7 个视频后手工抽查验证，各项指标达标。
 
 ---
 
@@ -351,3 +261,9 @@ OCR 对话提取管线已经完成并验证可用。接下来的工作是角色 
 本项目的架构设计参考了 [colleague-skill](https://github.com/titanwings/colleague-skill)（MIT License），将其「同事蒸馏」方法迁移到虚构角色领域。
 
 角色「月下」及相关设定属于米哈游《崩坏3rd》。本项目仅用于个人学习和研究目的。
+
+---
+
+## License
+
+[MIT](LICENSE)
