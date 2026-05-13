@@ -5,7 +5,7 @@
 > *"吸血鬼不信神，也不信命运，但像这样出现在我面前的你，一定是我遇到过的最大的奇迹。"*
 
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://claude.ai/code)
-[![Python 3.10](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://python.org)
+[![Python 3.10](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![PaddleOCR](https://img.shields.io/badge/PaddleOCR-OCR%20Engine-orange)](https://github.com/PaddlePaddle/PaddleOCR)
 [![PyAV](https://img.shields.io/badge/PyAV-Video%20Processing-red)](https://github.com/PyAV-Org/PyAV)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -80,7 +80,7 @@ npx skills add AusertDream/ACGN-character-skill
 
 ```
 /ACGN-character          # 创建新角色或与已有角色对话
-/ACGN-character yuexia   # 直接进入月下角色扮演模式
+/ACGN-character yuexia   # 直接进入角色扮演模式，以月下角色名为例
 ```
 
 ### Python 环境安装（OCR 管线）
