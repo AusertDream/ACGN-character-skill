@@ -97,22 +97,33 @@ ls ${CLAUDE_SKILL_DIR}/characters/
 
 ### Step 2：原材料导入
 
-询问用户提供原材料，展示三种方式供选择：
+询问用户提供原材料，展示五种方式供选择：
 
 ```
 原材料怎么提供？
 
-  [A] 视频对话提取（OCR）
+  [A] 视频对话提取（OCR）— Game / Visual Novel
       提供视频文件路径或目录，用 OCR 管线提取游戏/VN 对话
       需要对应作品的 ROI 配置文件（configs/*.yaml）
       支持 mp4/mkv/avi/webm 等格式
 
-  [B] 上传文本文件
-      PDF / 图片 / TXT / MD
-      可以是角色相关的文档、截图、台词集等
+  [B] 上传文本文件 — Novel / 文档
+      PDF / 图片 / TXT / MD / EPUB
+      可以是角色相关的文档、截图、台词集、小说等
+      EPUB 文件会自动提取纯文本
 
   [C] 直接粘贴内容
       把文字复制进来（台词、剧情概要、角色分析等）
+
+  [D] 动画视频帧提取（VLM）— Anime
+      提供动画视频文件，按间隔切分为帧图片
+      用 subagent 调用视觉理解模型逐帧/逐组提取对话和场景描写
+      ⚠️ 极度消耗 token，效果存疑，仅作保底方案
+
+  [E] 漫画图片提取（VLM）— Comic
+      提供漫画图片文件或目录
+      用 subagent 调用视觉理解模型逐页提取对话框文字和场景描写
+      ⚠️ 极度消耗 token，效果存疑，仅作保底方案
 
 可以混用，也可以跳过（仅凭手动信息生成）。
 ```
@@ -293,6 +304,58 @@ python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
 #### 方式 C：直接粘贴
 
 用户粘贴的内容直接作为文本原材料，无需调用任何工具。
+
+---
+
+#### 方式 D：动画视频帧提取（VLM）— Anime
+
+⚠️ **警告**：此方式会将视频切分为大量帧图片，逐帧/逐组送入视觉理解模型处理，token 消耗极大。实际效果尚未充分验证，仅作为没有其他数据来源时的保底方案。优先考虑是否有现成的字幕文件（.srt/.ass）、剧情文档或 wiki 可用。
+
+用户提供动画视频文件路径后：
+
+1. 用 PyAV 按固定间隔（默认每 5 秒一帧）提取关键帧：
+   ```bash
+   python -c "
+   import av, pathlib
+   container = av.open('{video_path}')
+   stream = container.streams.video[0]
+   fps = float(stream.average_rate)
+   interval = int(fps * 5)
+   out_dir = pathlib.Path('./characters/{slug}/knowledge/frames')
+   out_dir.mkdir(parents=True, exist_ok=True)
+   for i, frame in enumerate(container.decode(video=0)):
+       if i % interval == 0:
+           frame.to_image().save(out_dir / f'frame_{i:06d}.png')
+   container.close()
+   "
+   ```
+
+2. 用 `Agent` 工具召唤 subagent，将帧图片分批（每批 10-20 张）送入，prompt 要求 subagent：
+   - 识别每帧中的对话字幕文字
+   - 识别说话人（通过画面中的角色）
+   - 描述关键场景和角色动作
+   - 输出为 `[说话人] 对话内容` 格式的文本
+
+3. 合并 subagent 输出为纯文本台本，保存至 `characters/{slug}/knowledge/`
+
+---
+
+#### 方式 E：漫画图片提取（VLM）— Comic
+
+⚠️ **警告**：此方式对每页漫画图片调用视觉理解模型，token 消耗极大。实际效果尚未充分验证，仅作为保底方案。优先考虑是否有对应的文字版剧情、wiki 或小说原作可用。
+
+用户提供漫画图片文件或目录后：
+
+1. 收集所有图片文件（支持 png/jpg/webp），按文件名排序确定阅读顺序
+
+2. 用 `Agent` 工具召唤 subagent，将图片分批（每批 5-10 页）送入，prompt 要求 subagent：
+   - 识别每页中所有对话框的文字内容
+   - 按阅读顺序（从右到左或从左到右，根据漫画类型判断）排列
+   - 识别说话人（通过气泡指向的角色）
+   - 描述关键场景和角色表情
+   - 输出为 `[说话人] 对话内容` 格式的文本
+
+3. 合并 subagent 输出为纯文本台本，保存至 `characters/{slug}/knowledge/`
 
 ---
 
@@ -578,17 +641,28 @@ Ask the user how they'd like to provide materials:
 ```
 How would you like to provide source materials?
 
-  [A] Video Dialogue Extraction (OCR)
+  [A] Video Dialogue Extraction (OCR) — Game / Visual Novel
       Provide video file path or directory, extract game/VN dialogue via OCR pipeline
       Requires a matching ROI config file (configs/*.yaml)
       Supports mp4/mkv/avi/webm formats
 
-  [B] Upload Text Files
-      PDF / images / TXT / MD
-      Character-related docs, screenshots, dialogue collections, etc.
+  [B] Upload Text Files — Novel / Documents
+      PDF / images / TXT / MD / EPUB
+      Character-related docs, screenshots, dialogue collections, novels, etc.
+      EPUB files are automatically extracted to plain text
 
   [C] Paste Text
       Copy-paste text directly (dialogues, plot summaries, character analyses, etc.)
+
+  [D] Anime Video Frame Extraction (VLM) — Anime
+      Provide anime video files, split into frames at intervals
+      Uses subagent with vision model to extract dialogue and scene descriptions per frame
+      ⚠️ Extremely token-intensive, effectiveness unverified, last-resort option only
+
+  [E] Comic Image Extraction (VLM) — Comic
+      Provide comic image files or directory
+      Uses subagent with vision model to extract dialogue bubbles and scene descriptions per page
+      ⚠️ Extremely token-intensive, effectiveness unverified, last-resort option only
 
 Can mix and match, or skip entirely (generate from manual info only).
 ```
@@ -770,6 +844,58 @@ After receiving the subagent's quality report, show the report summary to the us
 #### Option C: Paste Text
 
 User-pasted content is used directly as text material. No tools needed.
+
+---
+
+#### Option D: Anime Video Frame Extraction (VLM)
+
+⚠️ **Warning**: This method splits video into many frame images and processes each through a vision model, consuming an extreme amount of tokens. Effectiveness has not been fully verified — use only as a last resort when no other data sources (subtitle files, plot docs, wikis) are available.
+
+After user provides anime video file paths:
+
+1. Extract keyframes at fixed intervals (default: one frame every 5 seconds) using PyAV:
+   ```bash
+   python -c "
+   import av, pathlib
+   container = av.open('{video_path}')
+   stream = container.streams.video[0]
+   fps = float(stream.average_rate)
+   interval = int(fps * 5)
+   out_dir = pathlib.Path('./characters/{slug}/knowledge/frames')
+   out_dir.mkdir(parents=True, exist_ok=True)
+   for i, frame in enumerate(container.decode(video=0)):
+       if i % interval == 0:
+           frame.to_image().save(out_dir / f'frame_{i:06d}.png')
+   container.close()
+   "
+   ```
+
+2. Use the `Agent` tool to spawn a subagent, sending frame images in batches (10-20 per batch). The subagent prompt should instruct it to:
+   - Identify subtitle/dialogue text in each frame
+   - Identify the speaker (from characters visible in the frame)
+   - Describe key scenes and character actions
+   - Output in `[Speaker] Dialogue content` format
+
+3. Merge subagent output into plain text transcripts, save to `characters/{slug}/knowledge/`
+
+---
+
+#### Option E: Comic Image Extraction (VLM)
+
+⚠️ **Warning**: This method processes each comic page through a vision model, consuming an extreme amount of tokens. Effectiveness has not been fully verified — use only as a last resort when no text-based plot sources, wikis, or source novels are available.
+
+After user provides comic image files or directory:
+
+1. Collect all image files (png/jpg/webp), sort by filename to determine reading order
+
+2. Use the `Agent` tool to spawn a subagent, sending images in batches (5-10 pages per batch). The subagent prompt should instruct it to:
+   - Identify all dialogue bubble text on each page
+   - Arrange in reading order (right-to-left or left-to-right depending on comic type)
+   - Identify speakers (from bubble tail direction)
+   - Describe key scenes and character expressions
+   - Output in `[Speaker] Dialogue content` format
+
+3. Merge subagent output into plain text transcripts, save to `characters/{slug}/knowledge/`
 
 ---
 
