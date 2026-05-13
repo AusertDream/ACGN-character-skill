@@ -300,30 +300,46 @@ python3 -m tools.text_output characters/{slug}/knowledge/{video_name}.jsonl
 
 ### Step 3：分析原材料
 
-将收集到的所有原材料和用户填写的基础信息汇总，按以下两条线分析：
+将收集到的所有原材料和用户填写的基础信息汇总，按以下三条线分析：
 
-**线路 A（角色设定 Story）**：
+**线路 A（完整故事 Story）**：
 - 参考 `${CLAUDE_SKILL_DIR}/prompts/story_analyzer.md` 中的提取维度
-- 提取：世界观背景、角色经历、人际关系、能力设定、关键事件
-- 根据角色类型重点提取（战斗系/日常系/悬疑系/恋爱系不同侧重）
+- 按时间线梳理角色的完整人生经历：出身背景、重大事件、转折点、当前状态
+- 提取世界观背景、能力设定、关键事件的详细经过
+- 这是角色的**记忆库**，要求完整详尽，不遗漏重要细节
 
-**线路 B（人格 Persona）**：
+**线路 B（人物关系 Relationships）**：
+- 从故事中提取所有与目标角色有交集的角色
+- 对每一对关系，记录：关系性质（亲人/恋人/战友/对手/上下级等）、关系发展过程（初识→变化→现状）、关键互动事件、角色对对方的态度和情感
+- 注意关系的不对称性：A 对 B 的感情和 B 对 A 的感情可能不同
+
+**线路 C（人格 Persona）**：
 - 参考 `${CLAUDE_SKILL_DIR}/prompts/persona_analyzer.md` 中的提取维度
 - 将用户填写的标签翻译为具体行为规则（参见标签翻译表）
 - 从原材料中提取：表达风格、情感模式、人际行为、口癖口头禅
 
+三条线可以并行分析（用多个 subagent），但线路 B 依赖线路 A 的结果来确认关系细节。
+
 ### Step 4：生成并预览
 
-参考 `${CLAUDE_SKILL_DIR}/prompts/story_builder.md` 生成角色设定内容。
-参考 `${CLAUDE_SKILL_DIR}/prompts/persona_builder.md` 生成 Persona 内容（5 层结构）。
+**1. 生成 story.md**：参考 `${CLAUDE_SKILL_DIR}/prompts/story_builder.md`，按时间线组织角色的完整经历。这是角色的记忆库，在角色扮演时作为检索源使用，不会直接注入 prompt。
 
-向用户展示摘要（各 5-8 行），询问：
+**2. 生成 story_summary.md**：从 story.md 中提炼一份故事概要（约 500-1000 字），包含角色的核心经历脉络、重大转折点、当前状态。这份概要会作为 prompt 的一部分注入，让角色对自己的人生有一个大致的记忆框架，知道在需要时去检索 story.md 中的具体细节。
+
+**3. 生成 relationships.md**：列出所有重要角色关系，每段关系包含：对方是谁、关系性质、关系发展简述、当前状态、角色对对方的核心情感。这份文件会作为 prompt 的一部分注入。
+
+**4. 生成 persona.md**：参考 `${CLAUDE_SKILL_DIR}/prompts/persona_builder.md` 生成 Persona 内容（5 层结构）。这是角色扮演的核心指令，作为 prompt 注入。
+
+向用户展示摘要，询问：
 ```
-角色设定摘要：
-  - 作品：{xxx}
-  - 身份：{xxx}
+故事概要摘要：
   - 核心经历：{xxx}
-  - 关键关系：{xxx}
+  - 重大转折：{xxx}
+  - 当前状态：{xxx}
+
+人物关系摘要：
+  - {角色A}：{关系描述}
+  - {角色B}：{关系描述}
   ...
 
 人格摘要：
@@ -347,11 +363,21 @@ mkdir -p characters/{slug}/knowledge
 
 **2. 写入 story.md**（用 Write 工具）：
 路径：`characters/{slug}/story.md`
+内容：完整的角色故事，按时间线组织。这是记忆检索库，角色扮演时按需读取。
 
-**3. 写入 persona.md**（用 Write 工具）：
+**3. 写入 story_summary.md**（用 Write 工具）：
+路径：`characters/{slug}/story_summary.md`
+内容：故事概要（500-1000 字），作为 prompt 注入让角色知道自己经历过什么，以便在需要时主动检索 story.md。
+
+**4. 写入 relationships.md**（用 Write 工具）：
+路径：`characters/{slug}/relationships.md`
+内容：所有重要人物关系，作为 prompt 注入。
+
+**5. 写入 persona.md**（用 Write 工具）：
 路径：`characters/{slug}/persona.md`
+内容：五层人格结构，作为 prompt 注入。
 
-**4. 写入 meta.json**（用 Write 工具）：
+**6. 写入 meta.json**（用 Write 工具）：
 路径：`characters/{slug}/meta.json`
 内容：
 ```json
@@ -377,7 +403,7 @@ mkdir -p characters/{slug}/knowledge
 }
 ```
 
-**5. 生成完整 SKILL.md**（用 Write 工具）：
+**7. 生成完整 SKILL.md**（用 Write 工具）：
 路径：`characters/{slug}/SKILL.md`
 
 SKILL.md 结构：
@@ -394,13 +420,21 @@ user-invocable: true
 
 ---
 
-## PART A：角色设定
+## PART A：故事概要
 
-{story.md 全部内容}
+{story_summary.md 全部内容}
+
+完整的故事记忆存储在 `${CLAUDE_SKILL_DIR}/characters/{slug}/story.md` 中。当用户的话题涉及到具体事件、具体场景、具体对话的细节时，用 Read 工具读取 story.md 中对应的章节来回忆细节，而不是凭空编造。
 
 ---
 
-## PART B：人物性格
+## PART B：人物关系
+
+{relationships.md 全部内容}
+
+---
+
+## PART C：人格
 
 {persona.md 全部内容}
 
@@ -409,11 +443,13 @@ user-invocable: true
 ## 运行规则
 
 1. 你就是{name}本人，以{name}的第一人称与用户对话
-2. 先由 PART B 判断：{name}在当前场景下会是什么态度和情绪
-3. 再由 PART A 确认：{name}知道什么、不知道什么、会怎么理解这件事
-4. 输出时始终保持 PART B Layer 2 的表达风格
-5. PART B Layer 0 的规则优先级最高，任何情况下不得违背
-6. 不要跳出角色，不要以AI身份回应
+2. 先由 PART C 判断：{name}在当前场景下会是什么态度和情绪
+3. 由 PART B 确认：对话对象与{name}是什么关系，据此调整语气和亲疏
+4. 由 PART A 确认：{name}知道什么、不知道什么、会怎么理解这件事
+5. 当话题涉及具体事件细节时，用 Read 工具读取 story.md 对应章节，不要凭记忆编造
+6. 输出时始终保持 PART C Layer 2 的表达风格
+7. PART C Layer 0 的规则优先级最高，任何情况下不得违背
+8. 不要跳出角色，不要以AI身份回应
 ```
 
 告知用户：
@@ -433,15 +469,16 @@ user-invocable: true
 用户提供新文件或文本时：
 
 1. 按 Step 2 的方式读取新内容
-2. 用 `Read` 读取现有 `characters/{slug}/story.md` 和 `persona.md`
+2. 用 `Read` 读取现有 `characters/{slug}/story.md`、`story_summary.md`、`relationships.md` 和 `persona.md`
 3. 参考 `${CLAUDE_SKILL_DIR}/prompts/merger.md` 分析增量内容
 4. 存档当前版本（用 Bash）：
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/tools/version_manager.py --action backup --slug {slug} --base-dir ./characters
    ```
-5. 用 `Edit` 工具追加增量内容到对应文件
-6. 重新生成 `SKILL.md`（合并最新 story.md + persona.md）
-7. 更新 `meta.json` 的 version 和 updated_at
+5. 用 `Edit` 工具追加增量内容到对应文件（story.md、relationships.md、persona.md）
+6. 重新生成 `story_summary.md`（从更新后的 story.md 重新提炼概要）
+7. 重新生成 `SKILL.md`（合并最新 story_summary.md + relationships.md + persona.md）
+8. 更新 `meta.json` 的 version 和 updated_at
 
 ---
 
@@ -740,30 +777,46 @@ If the user says "no files" or "skip", generate Skill from Step 1 manual info on
 
 ### Step 3: Analyze Source Material
 
-Combine all collected materials and user-provided info, analyze along two tracks:
+Combine all collected materials and user-provided info, analyze along three tracks:
 
-**Track A (Story Setting)**:
+**Track A (Full Story)**:
 - Refer to `${CLAUDE_SKILL_DIR}/prompts/story_analyzer.md` for extraction dimensions
-- Extract: world setting, character history, relationships, abilities, key events
-- Emphasize different aspects by character type (combat/slice-of-life/mystery/romance)
+- Organize the character's complete life experiences chronologically: background, major events, turning points, current state
+- Extract world setting, abilities, and detailed key event accounts
+- This is the character's **memory bank** — must be thorough and complete, no important details omitted
 
-**Track B (Persona)**:
+**Track B (Relationships)**:
+- Extract all characters who interact with the target character from the story
+- For each relationship, record: nature (family/lover/comrade/rival/superior-subordinate etc.), development arc (first meeting → changes → current state), key interaction events, the character's attitude and feelings toward the other
+- Note relationship asymmetry: A's feelings toward B may differ from B's feelings toward A
+
+**Track C (Persona)**:
 - Refer to `${CLAUDE_SKILL_DIR}/prompts/persona_analyzer.md` for extraction dimensions
 - Translate user-provided tags into concrete behavior rules (see tag translation table)
 - Extract from materials: expression style, emotional patterns, interpersonal behavior, verbal tics
 
+The three tracks can be analyzed in parallel (using multiple subagents), but Track B depends on Track A's results for relationship details.
+
 ### Step 4: Generate and Preview
 
-Use `${CLAUDE_SKILL_DIR}/prompts/story_builder.md` to generate story setting content.
-Use `${CLAUDE_SKILL_DIR}/prompts/persona_builder.md` to generate Persona content (5-layer structure).
+**1. Generate story.md**: Use `${CLAUDE_SKILL_DIR}/prompts/story_builder.md`, organize the character's complete experiences chronologically. This is the character's memory bank, used as a retrieval source during roleplay — not directly injected into the prompt.
 
-Show the user a summary (5-8 lines each), ask:
+**2. Generate story_summary.md**: Distill a story overview from story.md (approximately 500-1000 words), covering the character's core experience arc, major turning points, and current state. This overview is injected as part of the prompt, giving the character a general memory framework of their life, so they know when to actively retrieve specific details from story.md.
+
+**3. Generate relationships.md**: List all important character relationships, each including: who the other person is, nature of relationship, brief development arc, current state, core feelings toward them. This file is injected as part of the prompt.
+
+**4. Generate persona.md**: Use `${CLAUDE_SKILL_DIR}/prompts/persona_builder.md` to generate Persona content (5-layer structure). This is the core roleplay instruction, injected as part of the prompt.
+
+Show the user a summary, ask:
 ```
-Story Setting Summary:
-  - Source work: {xxx}
-  - Identity: {xxx}
+Story Overview Summary:
   - Core experiences: {xxx}
-  - Key relationships: {xxx}
+  - Major turning points: {xxx}
+  - Current state: {xxx}
+
+Relationships Summary:
+  - {Character A}: {relationship description}
+  - {Character B}: {relationship description}
   ...
 
 Persona Summary:
@@ -787,11 +840,21 @@ mkdir -p characters/{slug}/knowledge
 
 **2. Write story.md** (Write tool):
 Path: `characters/{slug}/story.md`
+Content: Complete character story, organized chronologically. This is the memory retrieval bank, read on demand during roleplay.
 
-**3. Write persona.md** (Write tool):
+**3. Write story_summary.md** (Write tool):
+Path: `characters/{slug}/story_summary.md`
+Content: Story overview (500-1000 words), injected as prompt so the character knows what they've experienced and can proactively retrieve story.md when needed.
+
+**4. Write relationships.md** (Write tool):
+Path: `characters/{slug}/relationships.md`
+Content: All important character relationships, injected as prompt.
+
+**5. Write persona.md** (Write tool):
 Path: `characters/{slug}/persona.md`
+Content: Five-layer persona structure, injected as prompt.
 
-**4. Write meta.json** (Write tool):
+**6. Write meta.json** (Write tool):
 Path: `characters/{slug}/meta.json`
 Content:
 ```json
@@ -817,7 +880,7 @@ Content:
 }
 ```
 
-**5. Generate full SKILL.md** (Write tool):
+**7. Generate full SKILL.md** (Write tool):
 Path: `characters/{slug}/SKILL.md`
 
 SKILL.md structure:
@@ -834,13 +897,21 @@ user-invocable: true
 
 ---
 
-## PART A: Story Setting
+## PART A: Story Overview
 
-{full story.md content}
+{full story_summary.md content}
+
+The complete story memory is stored in `${CLAUDE_SKILL_DIR}/characters/{slug}/story.md`. When the user's topic involves specific events, scenes, or dialogue details, use the Read tool to read the corresponding chapter from story.md to recall details — never fabricate them.
 
 ---
 
-## PART B: Persona
+## PART B: Relationships
+
+{full relationships.md content}
+
+---
+
+## PART C: Persona
 
 {full persona.md content}
 
@@ -849,11 +920,13 @@ user-invocable: true
 ## Execution Rules
 
 1. You ARE {name} — speak in first person as {name}
-2. PART B decides first: what attitude and emotion would {name} have in this scenario
-3. PART A confirms: what {name} knows, doesn't know, and how they'd understand this
-4. Always maintain PART B Layer 2's expression style in output
-5. PART B Layer 0 rules have the highest priority and must never be violated
-6. Never break character, never respond as an AI
+2. PART C decides first: what attitude and emotion would {name} have in this scenario
+3. PART B confirms: what is the relationship between the conversation partner and {name}, adjust tone and intimacy accordingly
+4. PART A confirms: what {name} knows, doesn't know, and how they'd understand this
+5. When the topic involves specific event details, use the Read tool to read the corresponding chapter from story.md — do not fabricate from memory
+6. Always maintain PART C Layer 2's expression style in output
+7. PART C Layer 0 rules have the highest priority and must never be violated
+8. Never break character, never respond as an AI
 ```
 
 Inform user:
@@ -873,15 +946,16 @@ If something feels off, just say "she wouldn't do that" and I'll update it.
 When user provides new files or text:
 
 1. Read new content using Step 2 methods
-2. `Read` existing `characters/{slug}/story.md` and `persona.md`
+2. `Read` existing `characters/{slug}/story.md`, `story_summary.md`, `relationships.md` and `persona.md`
 3. Refer to `${CLAUDE_SKILL_DIR}/prompts/merger.md` for incremental analysis
 4. Archive current version (Bash):
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/tools/version_manager.py --action backup --slug {slug} --base-dir ./characters
    ```
-5. Use `Edit` tool to append incremental content to relevant files
-6. Regenerate `SKILL.md` (merge latest story.md + persona.md)
-7. Update `meta.json` version and updated_at
+5. Use `Edit` tool to append incremental content to relevant files (story.md, relationships.md, persona.md)
+6. Regenerate `story_summary.md` (re-distill overview from updated story.md)
+7. Regenerate `SKILL.md` (merge latest story_summary.md + relationships.md + persona.md)
+8. Update `meta.json` version and updated_at
 
 ---
 
